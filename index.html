@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+<meta charset='utf-8' />
+<title>mccivmap</title>
+<style>
+  html,body{margin:0;height:100%}
+  body{background:#000;font:14px system-ui;color:#fff}
+  #canvas{position:fixed;inset:0;display:block}
+  #hud-x,#hud-z{position:fixed;top:12px;background:#0008;padding:.3rem .6rem;border-radius:.4rem;pointer-events:none;font-variant-numeric:tabular-nums}
+  #hud-x{right:50%;border-top-right-radius:0;border-bottom-right-radius:0;text-align:right}
+  #hud-z{left:50%;border-top-left-radius:0;border-bottom-left-radius:0;text-align:left}
+</style>
+</head>
+<body>
+<canvas id='canvas'></canvas>
+<span id='hud-x'>0</span>
+<span id='hud-z'>0</span>
+<script>
+  'use strict';
+
+  class Camera {
+    constructor() {
+      this.zoomStepFactor = 1.1;
+      this.zoomLevel = 0;
+      this.minZoomLevel = -20;
+      this.maxZoomLevel = 60;
+      this.scale = 1;
+      this.offsetX = 0;
+      this.offsetY = 0;
+      this.panning = false;
+    }
+
+    frame(x, y, width, height, padding = 0.1) {
+      let scaleX = screenCanvas.width / (width * (1+padding));
+      let scaleY = screenCanvas.height / (height * (1+padding));
+      this.setZoomLevelFromScale(Math.min(scaleX, scaleY));
+      this.center(x + width/2, y + height/2);
+    }
+    center(x, y) {
+      this.offsetX = -x * this.scale + screenCanvas.width/2;
+      this.offsetY = -y * this.scale + screenCanvas.height/2;
+    }
+
+    setZoomLevelFromScale(scale) {
+      this.zoomLevel = Math.floor(Math.log(scale)/Math.log(this.zoomStepFactor));
+      this.updateScale();
+    }
+
+    zoomIn(x, y) {
+      if (this.zoomLevel >= this.maxZoomLevel) return;
+      this.zoomLevel += 1;
+      this.updateScale(x, y);
+    }
+
+    zoomOut(x, y) {
+      if (this.zoomLevel <= this.minZoomLevel) return;
+      this.zoomLevel -= 1;
+      this.updateScale(x, y);
+    }
+
+    updateScale(x, y) {
+      const newScale = Math.pow(this.zoomStepFactor, this.zoomLevel);
+      const scaleChange = newScale / this.scale;
+      this.offsetX = x - (x - this.offsetX) * scaleChange;
+      this.offsetY = y - (y - this.offsetY) * scaleChange;
+      this.scale = newScale;
+    }
+
+    pan(dx, dy) {
+      this.offsetX += dx;
+      this.offsetY += dy;
+    }
+
+    resize() {
+      this.offsetX += (innerWidth  - screenCanvas.width ) / 2;
+      this.offsetY += (innerHeight - screenCanvas.height) / 2;
+      screenCanvas.width = innerWidth;
+      screenCanvas.height = innerHeight;
+    }
+
+    worldToScreen(x, y) { return { x:  x * this.scale    + this.offsetX, y:  y * this.scale    + this.offsetY }; }
+    screenToWorld(x, y) { return { x: (x - this.offsetX) / this.scale,   y: (y - this.offsetY) / this.scale   }; }
+    worldToScreenDistance(x, y) { return { x: x * this.scale, y: y * this.scale }; }
+    screenToWorldDistance(x, y) { return { x: x / this.scale, y: y / this.scale }; }
+    apply(canvasContext) {
+      canvasContext.setTransform(this.scale, 0, 0, this.scale, this.offsetX, this.offsetY);
+    }
+  }
+
+  function updateMouseCoordsLabel(screenX, screenY){
+    const { x, y } = camera.screenToWorld(screenX, screenY);
+    hudX.textContent = Math.floor(x);
+    hudZ.textContent = Math.floor(y);
+  }
+
+  const hudX = document.getElementById('hud-x');
+  const hudZ = document.getElementById('hud-z');
+  const screenCanvas = document.getElementById('canvas');
+
+  const camera = new Camera();
+  const screenCanvasContext = canvas.getContext('2d');
+
+  let worldBitmap = null;
+  let worldOffsetX = 0;
+  let worldOffsetY = 0;
+  let drawWorldAxes = false;
+
+  function draw() {
+    const ctx = screenCanvasContext;
+    ctx.resetTransform();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.imageSmoothingEnabled = false;
+
+    if (worldBitmap) {
+      camera.apply(ctx);
+      ctx.drawImage(worldBitmap, worldOffsetX, worldOffsetY);
+    }
+
+    // draw world axes
+    if (drawWorldAxes) {
+      ctx.resetTransform();
+      let {x: originX, y: originY} = camera.worldToScreen(0, 0);
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#333';
+      if (originX >= 0 && originX < screenCanvas.width) {
+        ctx.beginPath();
+        ctx.moveTo(originX, 0);
+        ctx.lineTo(originX, screenCanvas.height-1);
+        ctx.stroke();
+      }
+      if (originY >= 0 && originY < screenCanvas.height) {
+        ctx.beginPath();
+        ctx.moveTo(0, originY);
+        ctx.lineTo(screenCanvas.width-1, originY);
+        ctx.stroke();
+      }
+    }
+
+  }
+
+  window.onresize = () => {
+    camera.resize();
+    draw();
+  }
+
+  document.onkeydown = e => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      drawWorldAxes = !drawWorldAxes;
+      draw();
+    }
+  };
+
+  screenCanvas.onwheel = e => {
+    e.preventDefault();
+    if (e.deltaY > 0) camera.zoomOut(e.offsetX, e.offsetY);
+    else camera.zoomIn(e.offsetX, e.offsetY);
+    updateMouseCoordsLabel(e.offsetX, e.offsetY);
+    draw();
+  }
+
+  document.oncontextmenu = e => { e.preventDefault(); };
+
+  screenCanvas.onmousemove = e => {
+    if (e.buttons === 1) {
+      camera.pan(e.movementX, e.movementY);
+      draw();
+    }
+    updateMouseCoordsLabel(e.offsetX, e.offsetY);
+  };
+
+  document.ondragover = e => e.preventDefault();
+  document.ondrop = async e => {
+    e.preventDefault();
+    const bitmap = await createImageBitmap(e.dataTransfer.files[0]);
+    if (bitmap === null) return;
+    worldBitmap = bitmap;
+    camera.frame(0, 0, worldBitmap.width, worldBitmap.height);
+    draw();
+  };
+
+  document.onpaste = async e => {
+    const file = e.clipboardData.items[0].getAsFile();
+    if (file === null) return;
+    const bitmap = await createImageBitmap(file);
+    if (bitmap === null) return;
+    worldBitmap = bitmap;
+    camera.frame(0, 0, worldBitmap.width, worldBitmap.height);
+    draw();
+  };
+
+  (async () => {
+    window.onresize();
+    const res = await fetch("map.png");
+    const blob = await res.blob();
+    worldBitmap = await createImageBitmap(blob);
+    camera.frame(0, 0, worldBitmap.width, worldBitmap.height);
+    worldOffsetX = 3453 - 7578;
+    worldOffsetY = 1213 - 3746;
+    draw();
+  })();
+</script>
+</body>
+</html>
