@@ -1,205 +1,440 @@
-<!DOCTYPE html>
-<html lang='en'>
+<!doctype html>
+<html lang="en">
 <head>
-<meta charset='utf-8' />
-<title>mccivmap</title>
-<style>
-  html,body{margin:0;height:100%}
-  body{background:#000;font:14px system-ui;color:#fff}
-  #canvas{position:fixed;inset:0;display:block}
-  #hud-x,#hud-z{position:fixed;top:12px;background:#0008;padding:.3rem .6rem;border-radius:.4rem;pointer-events:none;font-variant-numeric:tabular-nums}
-  #hud-x{right:50%;border-top-right-radius:0;border-bottom-right-radius:0;text-align:right}
-  #hud-z{left:50%;border-top-left-radius:0;border-bottom-left-radius:0;text-align:left}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>mccivmap</title>
+  <style>
+    body { margin: 0; background: #000; color: #fff; font: 14px system-ui; }
+    #main-canvas { position: fixed; inset: 0; touch-action: none; }
+    #hud-x,#hud-z { display: none; background: #0008; position: fixed; top: 12px; padding: .3rem .6rem; border-radius: .4rem; pointer-events: none; font-variant-numeric: tabular-nums; }
+    #hud-x { right: 50%; border-top-right-radius: 0; border-bottom-right-radius: 0; text-align: right; }
+    #hud-z { left: 50%; border-top-left-radius: 0; border-bottom-left-radius: 0; text-align: left; }
+    #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 9999; }
+  </style>
 </head>
 <body>
-<canvas id='canvas'></canvas>
-<span id='hud-x'>0</span>
-<span id='hud-z'>0</span>
-<script>
-  'use strict';
+  <div id="loading">loading map...</div>
+  <canvas id="main-canvas"></canvas>
+  <span id='hud-x'>0</span>
+  <span id='hud-z'>0</span>
+  <script>
+    'use strict';
 
-  class Camera {
-    constructor() {
-      this.zoomStepFactor = 1.1;
-      this.zoomLevel = 0;
-      this.minZoomLevel = -20;
-      this.maxZoomLevel = 60;
-      this.scale = 1;
-      this.offsetX = 0;
-      this.offsetY = 0;
-      this.panning = false;
-    }
+    // ========== CAMERA ==========
+    class Camera {
+      #x = 0;
+      #y = 0;
+      #scale = 1;
+      #changeCallbacks = [];
 
-    frame(x, y, width, height, padding = 0.1) {
-      let scaleX = screenCanvas.width / (width * (1+padding));
-      let scaleY = screenCanvas.height / (height * (1+padding));
-      this.setZoomLevelFromScale(Math.min(scaleX, scaleY));
-      this.center(x + width/2, y + height/2);
-    }
-    center(x, y) {
-      this.offsetX = -x * this.scale + screenCanvas.width/2;
-      this.offsetY = -y * this.scale + screenCanvas.height/2;
-    }
+      get x()     { return this.#x;     }
+      get y()     { return this.#y;     }
+      get scale() { return this.#scale; }
 
-    setZoomLevelFromScale(scale) {
-      this.zoomLevel = Math.floor(Math.log(scale)/Math.log(this.zoomStepFactor));
-      this.updateScale();
-    }
+      set x(v)     { this.#x = v;     this.#changed(); }
+      set y(v)     { this.#y = v;     this.#changed(); }
+      set scale(v) { this.#scale = v; this.#changed(); }
 
-    zoomIn(x, y) {
-      if (this.zoomLevel >= this.maxZoomLevel) return;
-      this.zoomLevel += 1;
-      this.updateScale(x, y);
-    }
-
-    zoomOut(x, y) {
-      if (this.zoomLevel <= this.minZoomLevel) return;
-      this.zoomLevel -= 1;
-      this.updateScale(x, y);
-    }
-
-    updateScale(x, y) {
-      const newScale = Math.pow(this.zoomStepFactor, this.zoomLevel);
-      const scaleChange = newScale / this.scale;
-      this.offsetX = x - (x - this.offsetX) * scaleChange;
-      this.offsetY = y - (y - this.offsetY) * scaleChange;
-      this.scale = newScale;
-    }
-
-    pan(dx, dy) {
-      this.offsetX += dx;
-      this.offsetY += dy;
-    }
-
-    resize() {
-      this.offsetX += (innerWidth  - screenCanvas.width ) / 2;
-      this.offsetY += (innerHeight - screenCanvas.height) / 2;
-      screenCanvas.width = innerWidth;
-      screenCanvas.height = innerHeight;
-    }
-
-    worldToScreen(x, y) { return { x:  x * this.scale    + this.offsetX, y:  y * this.scale    + this.offsetY }; }
-    screenToWorld(x, y) { return { x: (x - this.offsetX) / this.scale,   y: (y - this.offsetY) / this.scale   }; }
-    worldToScreenDistance(x, y) { return { x: x * this.scale, y: y * this.scale }; }
-    screenToWorldDistance(x, y) { return { x: x / this.scale, y: y / this.scale }; }
-    apply(canvasContext) {
-      canvasContext.setTransform(this.scale, 0, 0, this.scale, this.offsetX, this.offsetY);
-    }
-  }
-
-  function updateMouseCoordsLabel(screenX, screenY){
-    const { x, y } = camera.screenToWorld(screenX, screenY);
-    hudX.textContent = Math.floor(x);
-    hudZ.textContent = Math.floor(y);
-  }
-
-  const hudX = document.getElementById('hud-x');
-  const hudZ = document.getElementById('hud-z');
-  const screenCanvas = document.getElementById('canvas');
-
-  const camera = new Camera();
-  const screenCanvasContext = canvas.getContext('2d');
-
-  let worldBitmap = null;
-  let worldOffsetX = 0;
-  let worldOffsetY = 0;
-  let drawWorldAxes = false;
-
-  function draw() {
-    const ctx = screenCanvasContext;
-    ctx.resetTransform();
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.imageSmoothingEnabled = false;
-
-    if (worldBitmap) {
-      camera.apply(ctx);
-      ctx.drawImage(worldBitmap, worldOffsetX, worldOffsetY);
-    }
-
-    // draw world axes
-    if (drawWorldAxes) {
-      ctx.resetTransform();
-      let {x: originX, y: originY} = camera.worldToScreen(0, 0);
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = '#333';
-      if (originX >= 0 && originX < screenCanvas.width) {
-        ctx.beginPath();
-        ctx.moveTo(originX, 0);
-        ctx.lineTo(originX, screenCanvas.height-1);
-        ctx.stroke();
+      constructor() {
+        Object.seal(this);
       }
-      if (originY >= 0 && originY < screenCanvas.height) {
-        ctx.beginPath();
-        ctx.moveTo(0, originY);
-        ctx.lineTo(screenCanvas.width-1, originY);
-        ctx.stroke();
+
+      worldToScreen(x, y, screenWidth, screenHeight) {
+        return {
+          x: (x - this.#x) * this.#scale + screenWidth /2,
+          y: (y - this.#y) * this.#scale + screenHeight/2,
+        };
+      }
+
+      screenToWorld(x, y, screenWidth, screenHeight) {
+        return {
+          x: (x - screenWidth /2) / this.#scale + this.#x,
+          y: (y - screenHeight/2) / this.#scale + this.#y,
+        };
+      }
+
+      worldToScreenDistance(value) { return value * this.#scale; }
+      screenToWorldDistance(value) { return value / this.#scale; }
+
+      apply(ctx) {
+        ctx.translate(ctx.canvas.width/2, ctx.canvas.height/2)
+        ctx.scale(this.#scale, this.#scale);
+        ctx.translate(-this.#x, -this.#y);
+      }
+
+      addChangeCallback(changeCallback) {
+        this.#changeCallbacks.push(changeCallback);
+      }
+
+      #changed() {
+        this.#changeCallbacks.forEach(changeCallback => { changeCallback(); });
       }
     }
 
-  }
+    class PanZoomController {
+      #camera;
+      #canvas;
+      #pinchScaleHistory = []; // { scale, screenSpaceScaleFocus: { x, y }, time }
+      #pressedPointerHistory = new Map(); // [{x, y, time, globalStateSnapshot}, ...]
+      #globalPressedPointerStats = {
+        pointerCount: 0,
+        centerOfAllPointers: { x: 0, y: 0 },
+        sumOfAllDistancesBetweenPointers: 0,
+      };
+      #velocity = { x: 0, y: 0 };
+      #scaleVelocity = 0;
+      #animatedScaleFocus = { x: 0, y: 0 };
+      #previousFrameTimeStamp = null;
+      #animationRequested = false;
 
-  window.onresize = () => {
-    camera.resize();
-    draw();
-  }
+      constructor(camera, canvas) {
+        this.#camera = camera;
+        this.#canvas = canvas;
+        Object.seal(this);
 
-  document.onkeydown = e => {
-    if (e.key === 'Tab') {
+        this.#canvas.addEventListener('pointerdown',   e => { this.#pointerDown(e);       });
+        this.#canvas.addEventListener('pointermove',   e => { this.#pointerMove(e);       });
+        this.#canvas.addEventListener('pointerup',     e => { this.#pointerUpOrCancel(e); });
+        this.#canvas.addEventListener('pointercancel', e => { this.#pointerUpOrCancel(e); });
+        this.#canvas.addEventListener('wheel',         e => { this.#wheel(e); });
+      }
+
+      #removePointerFromPressedPointerHistory(pointerId) {
+        this.#pressedPointerHistory.delete(pointerId);
+        this.#recalculatePressedPointerStats();
+      }
+
+      #recalculatePressedPointerStats() {
+        const mostRecentPointerEvents = [...this.#pressedPointerHistory.values()].map(pointerHistory => pointerHistory[pointerHistory.length-1]);
+        let distanceCount = 0;
+        let sumOfAllDistancesBetweenPointers = 0;
+        let sumOfAllPointerPositions = { x: 0, y: 0 };
+        for (let i = 0; i < mostRecentPointerEvents.length; i++) {
+          let ev1 = mostRecentPointerEvents[i];
+          sumOfAllPointerPositions.x += ev1.x;
+          sumOfAllPointerPositions.y += ev1.y;
+          for (let j = i+1; j < mostRecentPointerEvents.length; j++) {
+            let ev2 = mostRecentPointerEvents[j];
+            sumOfAllDistancesBetweenPointers += Math.hypot(ev1.x - ev2.x, ev1.y - ev2.y);
+            distanceCount += 1;
+          }
+        }
+        this.#globalPressedPointerStats = {
+          centerOfAllPointers: {
+            x: sumOfAllPointerPositions.x / this.#pressedPointerHistory.size,
+            y: sumOfAllPointerPositions.y / this.#pressedPointerHistory.size,
+          },
+          sumOfAllDistancesBetweenPointers,
+          pointerCount: this.#pressedPointerHistory.size,
+        };
+      }
+
+      #addEventToPressedPointerHistory(e) {
+        // get history array (or create empty one)
+        let history = this.#pressedPointerHistory.get(e.pointerId);
+        if (history === undefined) {
+          history = [];
+          this.#pressedPointerHistory.set(e.pointerId, history);
+        };
+
+        // prune old events
+        const cutoff = e.timeStamp - 20;
+        while (history.length > 0 && history[0].time < cutoff) {
+          history.shift();
+        }
+
+        let newEvent = {
+          x: e.x,
+          y: e.y,
+          time: e.timeStamp,
+        };
+        history.push(newEvent);
+        this.#recalculatePressedPointerStats();
+        newEvent.globalStateSnapshot = this.#globalPressedPointerStats;
+      }
+
+      #appendPinchScaleHistory(scale, scaleFocusX, scaleFocusY, time) {
+        this.#pinchScaleHistory.push({scale, screenSpaceScaleFocus: { x: scaleFocusX, y: scaleFocusY }, time});
+        const cutoff = time - 50;
+        while (this.#pinchScaleHistory.length > 0 && this.#pinchScaleHistory[0].time < cutoff) {
+          this.#pinchScaleHistory.shift();
+        }
+      }
+
+      #pointerDown(e) {
+        this.#addEventToPressedPointerHistory(e);
+        this.#appendPinchScaleHistory(this.#camera.scale, e.x, e.y, e.timeStamp);
+        this.#canvas.setPointerCapture(e.pointerId);
+      }
+
+      #pointerMove(e) {
+        // pointer that moved is not pressed (mouse hover)
+        if (!this.#pressedPointerHistory.has(e.pointerId)) return;
+
+        const oldCenter = this.#globalPressedPointerStats.centerOfAllPointers;
+        const oldDistance = this.#globalPressedPointerStats.sumOfAllDistancesBetweenPointers;
+
+        this.#addEventToPressedPointerHistory(e);
+
+        const newCenter = this.#globalPressedPointerStats.centerOfAllPointers;
+        const newDistance = this.#globalPressedPointerStats.sumOfAllDistancesBetweenPointers;
+
+        const oldWorldPos = this.#camera.screenToWorld(oldCenter.x, oldCenter.y, this.#canvas.width, this.#canvas.height);
+        const pointerCount = this.#globalPressedPointerStats.pointerCount;
+        this.#camera.scale *= (oldDistance === 0) ? 1 : Math.pow(newDistance/oldDistance, pointerCount-1);
+        const newWorldPos = this.#camera.screenToWorld(newCenter.x, newCenter.y, this.#canvas.width, this.#canvas.height);
+        this.#camera.x += oldWorldPos.x - newWorldPos.x;
+        this.#camera.y += oldWorldPos.y - newWorldPos.y;
+
+        this.#appendPinchScaleHistory(this.#camera.scale, newCenter.x, newCenter.y, e.timeStamp);
+
+      }
+
+      #calculatePanVelocity(e) {
+        const history = this.#pressedPointerHistory.get(e.pointerId);
+
+        // only look at the events with the maximum pointer count in the history
+        // e.g. if there was a pinch, ignore the inevitable single pointer events at the end
+        const maxPointerCount = Math.max(...history.map(ev => ev.globalStateSnapshot.pointerCount));
+        const filteredHistory = history.filter(ev => ev.globalStateSnapshot.pointerCount === maxPointerCount);
+
+        const firstEvent = filteredHistory[0];
+        const lastEvent  = filteredHistory[filteredHistory.length - 1];
+
+        const panDeltaTime = lastEvent.time - firstEvent.time;
+        if (panDeltaTime === 0) {
+          this.#velocity.x = 0;
+          this.#velocity.y = 0;
+        } else {
+          this.#velocity.x = -this.#camera.screenToWorldDistance((lastEvent.globalStateSnapshot.centerOfAllPointers.x - firstEvent.globalStateSnapshot.centerOfAllPointers.x) / panDeltaTime);
+          this.#velocity.y = -this.#camera.screenToWorldDistance((lastEvent.globalStateSnapshot.centerOfAllPointers.y - firstEvent.globalStateSnapshot.centerOfAllPointers.y) / panDeltaTime);
+        }
+      }
+
+      #calculateScaleVelocity() {
+        const firstScale = this.#pinchScaleHistory[0];
+        const lastScale  = this.#pinchScaleHistory[this.#pinchScaleHistory.length - 1];
+
+        const scaleDeltaTime = lastScale.time - firstScale.time;
+        if (scaleDeltaTime === 0) {
+          this.#scaleVelocity = 0;
+        } else {
+          this.#scaleVelocity = Math.log(lastScale.scale / firstScale.scale) / scaleDeltaTime;
+        }
+        this.#animatedScaleFocus = firstScale.screenSpaceScaleFocus;
+      }
+
+      #pointerUpOrCancel(e) {
+        if (this.#pressedPointerHistory.size === 1) {
+          // pan velocity
+          this.#addEventToPressedPointerHistory(e);
+          this.#calculatePanVelocity(e);
+
+          // zoom velocity
+          this.#appendPinchScaleHistory(this.#camera.scale, e.x, e.y, e.timeStamp);
+          this.#calculateScaleVelocity();
+
+          // fully released -> fling
+          this.#requestAnimation();
+        }
+        this.#removePointerFromPressedPointerHistory(e.pointerId);
+        this.#canvas.releasePointerCapture(e.pointerId);
+      }
+
+      #wheel(e) {
+        e.preventDefault();
+        if (e.deltaY === 0) return;
+
+        let scaleFactor;
+        if (e.deltaMode === WheelEvent.DOM_DELTA_PIXEL) {
+          scaleFactor = Math.pow(1.1, -e.deltaY/120);
+        } else {
+          scaleFactor = (e.deltaY > 0 ? 1/1.1 : 1.1);
+        }
+
+        const scaleVelocityChange = -e.deltaY/40000;
+        if (Math.sign(this.#scaleVelocity) !== Math.sign(scaleVelocityChange)) {
+          this.#scaleVelocity = 0;
+        }
+        this.#scaleVelocity += scaleVelocityChange;
+        this.#animatedScaleFocus.x = e.x;
+        this.#animatedScaleFocus.y = e.y;
+
+        this.#velocity.x = 0;
+        this.#velocity.y = 0;
+
+        this.#requestAnimation();
+      }
+
+      #requestAnimation() {
+        if (this.#animationRequested) return;
+        window.requestAnimationFrame((t) => {
+          this.#animationRequested = false;
+          let dt = 16.6;
+          if (this.#previousFrameTimeStamp !== null) {
+            dt = Math.min(t - this.#previousFrameTimeStamp, 100);
+          }
+          this.#previousFrameTimeStamp = t;
+          this.#animate(dt);
+        });
+        this.#animationRequested = true;
+      }
+
+      #animate(dt) {
+        if (this.#pressedPointerHistory.size === 0) {
+
+          this.#camera.x += this.#velocity.x * dt;
+          this.#camera.y += this.#velocity.y * dt;
+          this.#velocity.x *= .95;
+          this.#velocity.y *= .95;
+
+          const targetWorldPos = this.#camera.screenToWorld(this.#animatedScaleFocus.x, this.#animatedScaleFocus.y, this.#canvas.width, this.#canvas.height);
+          this.#camera.scale *= Math.exp(this.#scaleVelocity * dt);
+          const scaledWorldPos = this.#camera.screenToWorld(this.#animatedScaleFocus.x, this.#animatedScaleFocus.y, this.#canvas.width, this.#canvas.height);
+          this.#camera.x += targetWorldPos.x - scaledWorldPos.x;
+          this.#camera.y += targetWorldPos.y - scaledWorldPos.y;
+          this.#scaleVelocity *= .8;
+
+          if (Math.abs(this.#scaleVelocity) > .0001 || this.#camera.worldToScreenDistance(Math.hypot(this.#velocity.x, this.#velocity.y)) > .01) {
+            this.#requestAnimation();
+            return;
+          }
+        }
+        this.#previousFrameTimeStamp = null;
+        this.#velocity.x = 0;
+        this.#velocity.y = 0;
+        this.#scaleVelocity = 0;
+      }
+    }
+
+
+
+    // ========== GLOBALS ==========
+    const mainCanvas = document.getElementById('main-canvas');
+    const hudX = document.getElementById('hud-x');
+    const hudZ = document.getElementById('hud-z');
+
+    const mainCanvasContext = mainCanvas.getContext('2d');
+    const mainCamera = new Camera();
+    const cameraPanZoomController = new PanZoomController(mainCamera, mainCanvas);
+
+    let worldBitmap = null;
+    let worldOffsetX = 0;
+    let worldOffsetY = 0;
+
+    let animationFrameRequested = false;
+
+    let clickedWorldCoords = null;
+
+
+
+    // ========== COORDS  ==========
+    mainCanvas.addEventListener('contextmenu', e => {
       e.preventDefault();
-      drawWorldAxes = !drawWorldAxes;
-      draw();
+      let newClickedWorldCoords = mainCamera.screenToWorld(e.x, e.y, mainCanvas.width, mainCanvas.height);
+      newClickedWorldCoords.x = Math.floor(newClickedWorldCoords.x);
+      newClickedWorldCoords.y = Math.floor(newClickedWorldCoords.y);
+      if (clickedWorldCoords != null && newClickedWorldCoords.x === clickedWorldCoords.x && newClickedWorldCoords.y === clickedWorldCoords.y) {
+        clickedWorldCoords = null;
+        window.history.replaceState({}, '', `${window.location.pathname}`);
+        hudX.style.display = 'none';
+        hudZ.style.display = 'none';
+      } else {
+        clickedWorldCoords = newClickedWorldCoords;
+        window.history.replaceState({}, '', `${window.location.pathname}?${clickedWorldCoords.x},${clickedWorldCoords.y}`);
+        hudX.textContent = clickedWorldCoords.x;
+        hudZ.textContent = clickedWorldCoords.y;
+        hudX.style.display = 'block';
+        hudZ.style.display = 'block';
+      }
+    });
+
+
+
+    // ========== RENDER ==========
+    mainCamera.addChangeCallback(() => { requestRender(); })
+
+    function requestRender() {
+      if (animationFrameRequested) return;
+      window.requestAnimationFrame((t) => {
+        animationFrameRequested = false;
+        render(mainCanvasContext, mainCamera);
+      });
+      animationFrameRequested = true;
     }
-  };
 
-  screenCanvas.onwheel = e => {
-    e.preventDefault();
-    if (e.deltaY > 0) camera.zoomOut(e.offsetX, e.offsetY);
-    else camera.zoomIn(e.offsetX, e.offsetY);
-    updateMouseCoordsLabel(e.offsetX, e.offsetY);
-    draw();
-  }
+    function render(ctx, camera) {
+      ctx.resetTransform();
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      ctx.imageSmoothingEnabled = camera.scale < 1;
 
-  document.oncontextmenu = e => { e.preventDefault(); };
+      camera.apply(ctx);
 
-  screenCanvas.onmousemove = e => {
-    if (e.buttons === 1) {
-      camera.pan(e.movementX, e.movementY);
-      draw();
+      if (worldBitmap !== null) {
+        ctx.drawImage(worldBitmap, worldOffsetX, worldOffsetY);
+      }
+
+      ctx.resetTransform();
+
+      if (clickedWorldCoords !== null) {
+        let screenCoords = camera.worldToScreen(clickedWorldCoords.x + .5, clickedWorldCoords.y + .5, mainCanvas.width, mainCanvas.height);
+        drawPin(ctx, screenCoords.x, screenCoords.y);
+      }
+
     }
-    updateMouseCoordsLabel(e.offsetX, e.offsetY);
-  };
 
-  document.ondragover = e => e.preventDefault();
-  document.ondrop = async e => {
-    e.preventDefault();
-    const bitmap = await createImageBitmap(e.dataTransfer.files[0]);
-    if (bitmap === null) return;
-    worldBitmap = bitmap;
-    camera.frame(0, 0, worldBitmap.width, worldBitmap.height);
-    draw();
-  };
+    function drawPin(ctx, x, y, color = '#F00') {
+      const pinWidth = 24;
+      const pinHeight = 20;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#000';
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - pinWidth/2, y - pinHeight);
+      ctx.lineTo(x + pinWidth/2, y - pinHeight);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
 
-  document.onpaste = async e => {
-    const file = e.clipboardData.items[0].getAsFile();
-    if (file === null) return;
-    const bitmap = await createImageBitmap(file);
-    if (bitmap === null) return;
-    worldBitmap = bitmap;
-    camera.frame(0, 0, worldBitmap.width, worldBitmap.height);
-    draw();
-  };
 
-  (async () => {
-    window.onresize();
-    const res = await fetch("map.png");
-    const blob = await res.blob();
-    worldBitmap = await createImageBitmap(blob);
-    camera.frame(0, 0, worldBitmap.width, worldBitmap.height);
-    worldOffsetX = 3453 - 7578;
-    worldOffsetY = 1213 - 3746;
-    draw();
-  })();
-</script>
+
+    // ========== EVENTS ==========
+    window.addEventListener('resize', () => {
+      mainCanvas.width = window.innerWidth;
+      mainCanvas.height = window.innerHeight;
+      requestRender();
+    });
+
+    (async () => {
+      window.dispatchEvent(new Event('resize'));
+      const res = await fetch("map.png");
+      const blob = await res.blob();
+      worldBitmap = await createImageBitmap(blob);
+      let scaleX = mainCanvas.width / (worldBitmap.width * 1.1);
+      let scaleY = mainCanvas.height / (worldBitmap.height * 1.1);
+      mainCamera.scale = Math.min(scaleX, scaleY);
+      mainCamera.x = 0;
+      mainCamera.y = 0;
+      worldOffsetX = 3453 - 7578;
+      worldOffsetY = 1213 - 3746;
+      document.getElementById('loading').remove();
+      let urlCoords = window.location.search.slice(1).split(',').map(Number);
+      if (urlCoords.length == 2 && !Number.isNaN(urlCoords[0]) && !Number.isNaN(urlCoords[1])) {
+        clickedWorldCoords = { x: Math.floor(urlCoords[0]), y: Math.floor(urlCoords[1]) };
+        window.history.replaceState({}, '', `${window.location.pathname}?${clickedWorldCoords.x},${clickedWorldCoords.y}`);
+        hudX.textContent = clickedWorldCoords.x;
+        hudZ.textContent = clickedWorldCoords.y;
+        hudX.style.display = 'block';
+        hudZ.style.display = 'block';
+      } else {
+        window.history.replaceState({}, '', `${window.location.pathname}`);
+      }
+      requestRender();
+    })();
+  </script>
 </body>
 </html>
