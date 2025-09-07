@@ -12,13 +12,22 @@
     #hud-x { right: 50%; border-top-right-radius: 0; border-bottom-right-radius: 0; text-align: right; }
     #hud-z { left: 50%; border-top-left-radius: 0; border-bottom-left-radius: 0; text-align: left; }
     #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 9999; }
+    @font-face { font-family: 'MinecraftItalic'; src: url('/fonts/MinecraftItalic-R8Mo.otf') format('opentype'); }
   </style>
 </head>
 <body>
   <div id="loading">loading map...</div>
   <canvas id="main-canvas"></canvas>
-  <span id='hud-x'>0</span>
-  <span id='hud-z'>0</span>
+  <span id="hud-x">0</span>
+  <span id="hud-z">0</span>
+  <div id="textbox" style="position:fixed;top:0;left:0;padding:6px;font:16px sans-serif;max-width:90vw;word-wrap:break-word;">
+    TAB to show Labels
+  </div>
+  <div id="textbox2" hidden=true style="position:fixed;top:0;left:0;padding:6px;font:16px sans-serif;max-width:90vw;word-wrap:break-word;">
+    THIS IS WORK IN PROGRESS AND NOT ACCURATE / COMPLETE!! (= please don't hate me)<br/>
+    i just copied some of edii's labels as filler for now<br/>
+    hopefully i can find someone to manage the data so i can focus on features and polish
+  </div>
   <script>
     'use strict';
 
@@ -329,6 +338,45 @@
 
 
 
+    // ========== LABELS ==========
+
+    class Label {
+      #text;
+      #position;
+      #fillStyle;
+      #strokeStyle;
+      #lineWidth;
+      constructor(text, worldX, worldY, fillStyle, strokeStyle = '#000', lineWidth = 10.) {
+        this.#text = text;
+        this.#position = { x: 0, y: 0 };
+        this.#position.x = worldX;
+        this.#position.y = worldY;
+        this.#fillStyle = fillStyle;
+        this.#strokeStyle = strokeStyle;
+        this.#lineWidth = lineWidth;
+        Object.seal(this);
+      }
+
+      draw(ctx, camera) {
+        let screenPos = camera.worldToScreen(this.#position.x, this.#position.y, ctx.canvas.width, ctx.canvas.height);
+
+        let textScale = camera.scale < .5 ? camera.scale: .5;
+
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = `${100 * textScale}px MinecraftItalic`;
+
+        ctx.strokeStyle = this.#strokeStyle;
+        ctx.lineWidth = this.#lineWidth*2 * textScale;
+        ctx.strokeText(this.#text, screenPos.x, screenPos.y);
+
+        ctx.fillStyle = this.#fillStyle;
+        ctx.fillText(this.#text, screenPos.x, screenPos.y);
+      }
+    }
+
+
+
     // ========== GLOBALS ==========
     const mainCanvas = document.getElementById('main-canvas');
     const hudX = document.getElementById('hud-x');
@@ -345,6 +393,39 @@
     let animationFrameRequested = false;
 
     let clickedWorldCoords = null;
+
+    let showMapLabels = false;
+    let mapLabels = [
+      new Label('Renkai', 2244, -767, '#f300f3'),
+      new Label('Sarkovia', 943, -265, '#f90120'),
+      new Label('Imperium', 2656, 98, '#de8644'),
+      new Label('Checkerboard Union', 1421, 1124, '#b9bbcc'),
+      new Label('The SWZT', -46, 1487, '#559b16'),
+      new Label('The Holy Hydra Empire', -1219, 445, '#f38912'),
+      new Label('Helioria', -1427, -960, '#bbdc65'),
+      new Label('Polestar', 1653, -273, '#6767ea'),
+      new Label('Cooked v2', -123, -389, '#01fefe'),
+      new Label('El Gran Cartel', -2416, 507, '#32ed22'),
+      new Label('Northelios', 2517, -1470, '#fe3333'),
+      new Label('Pantha', -123, -1346, '#43a6d9'),
+      new Label('Soup Bowl', -2910, -543, '#d1502f'),
+      new Label('Penguinia', 1583, -1323, '#8667de'),
+      new Label('Harvestspire', 3050, 1271, '#56935b'),
+    ];
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        let textbox = document.getElementById('textbox').hidden = true;
+        let textbox2 = document.getElementById('textbox2');
+        if (!textbox2.hidden) {
+          textbox2.textContent = 'WIP!!';
+        }
+        textbox2.hidden = !textbox2.hidden;
+        showMapLabels = !showMapLabels;
+        requestRender();
+      }
+    });
 
 
 
@@ -385,6 +466,8 @@
     }
 
     function render(ctx, camera) {
+      if (worldBitmap === null) return;
+
       ctx.resetTransform();
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       ctx.imageSmoothingEnabled = camera.scale < 1;
@@ -396,6 +479,14 @@
       }
 
       ctx.resetTransform();
+
+      if (showMapLabels) {
+        ctx.fillStyle = '#0005';
+        ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        for (const label of mapLabels) {
+          label.draw(ctx, camera);
+        }
+      }
 
       if (clickedWorldCoords !== null) {
         let screenCoords = camera.worldToScreen(clickedWorldCoords.x + .5, clickedWorldCoords.y + .5, mainCanvas.width, mainCanvas.height);
@@ -430,7 +521,8 @@
 
     (async () => {
       window.dispatchEvent(new Event('resize'));
-      const res = await fetch('mapdata/usgsmap_day6_contributions_v2.png');
+      await document.fonts.load('32px MinecraftItalic');
+      const res = await fetch('/mapdata/usgsmap_day6_contributions_v2.png');
       const blob = await res.blob();
       worldBitmap = await createImageBitmap(blob);
       let scaleX = mainCanvas.width / (worldBitmap.width * 1.1);
@@ -452,6 +544,7 @@
       } else {
         window.history.replaceState({}, '', `${window.location.pathname}`);
       }
+      window.setTimeout(() => { document.getElementById('textbox').hidden = true; }, 5000);
       requestRender();
     })();
   </script>
