@@ -83,8 +83,9 @@
         centerOfAllPointers: { x: 0, y: 0 },
         sumOfAllDistancesBetweenPointers: 0,
       };
-      #velocity = { x: 0, y: 0 };
+      #panVelocity = { x: 0, y: 0 };
       #scaleVelocity = 0;
+      #scaleVelocityIsFromPinch = false;
       #animatedScaleFocus = { x: 0, y: 0 };
       #previousFrameTimeStamp = null;
       #animationRequested = false;
@@ -164,6 +165,9 @@
       }
 
       #pointerDown(e) {
+        // ignore right click
+        if (e.pointerType === 'mouse' && e.button === 2) return;
+
         this.#addEventToPressedPointerHistory(e);
         this.#appendPinchScaleHistory(this.#camera.scale, e.x, e.y, e.timeStamp);
         this.#canvas.setPointerCapture(e.pointerId);
@@ -205,11 +209,11 @@
 
         const panDeltaTime = lastEvent.time - firstEvent.time;
         if (panDeltaTime === 0) {
-          this.#velocity.x = 0;
-          this.#velocity.y = 0;
+          this.#panVelocity.x = 0;
+          this.#panVelocity.y = 0;
         } else {
-          this.#velocity.x = -this.#camera.screenToWorldDistance((lastEvent.globalStateSnapshot.centerOfAllPointers.x - firstEvent.globalStateSnapshot.centerOfAllPointers.x) / panDeltaTime);
-          this.#velocity.y = -this.#camera.screenToWorldDistance((lastEvent.globalStateSnapshot.centerOfAllPointers.y - firstEvent.globalStateSnapshot.centerOfAllPointers.y) / panDeltaTime);
+          this.#panVelocity.x = -this.#camera.screenToWorldDistance((lastEvent.globalStateSnapshot.centerOfAllPointers.x - firstEvent.globalStateSnapshot.centerOfAllPointers.x) / panDeltaTime);
+          this.#panVelocity.y = -this.#camera.screenToWorldDistance((lastEvent.globalStateSnapshot.centerOfAllPointers.y - firstEvent.globalStateSnapshot.centerOfAllPointers.y) / panDeltaTime);
         }
       }
 
@@ -222,19 +226,28 @@
           this.#scaleVelocity = 0;
         } else {
           this.#scaleVelocity = Math.log(lastScale.scale / firstScale.scale) / scaleDeltaTime;
+          this.#scaleVelocityIsFromPinch = true;
         }
         this.#animatedScaleFocus = firstScale.screenSpaceScaleFocus;
       }
 
       #pointerUpOrCancel(e) {
-        if (this.#pressedPointerHistory.size === 1) {
-          // pan velocity
-          this.#addEventToPressedPointerHistory(e);
-          this.#calculatePanVelocity(e);
+        // ignore untracked pointer events
+        if (this.#pressedPointerHistory.get(e.pointerId) === undefined) return;
 
-          // zoom velocity
+        if (this.#pressedPointerHistory.size === 1) {
+          // scale velocity
           this.#appendPinchScaleHistory(this.#camera.scale, e.x, e.y, e.timeStamp);
           this.#calculateScaleVelocity();
+
+          if (this.#scaleVelocity === 0) {
+            // pan velocity
+            this.#addEventToPressedPointerHistory(e);
+            this.#calculatePanVelocity(e);
+          } else {
+            this.#panVelocity.x = 0;
+            this.#panVelocity.y = 0;
+          }
 
           // fully released -> fling
           this.#requestAnimation();
@@ -259,11 +272,12 @@
           this.#scaleVelocity = 0;
         }
         this.#scaleVelocity += scaleVelocityChange;
+        this.#scaleVelocityIsFromPinch = false;
         this.#animatedScaleFocus.x = e.x;
         this.#animatedScaleFocus.y = e.y;
 
-        this.#velocity.x = 0;
-        this.#velocity.y = 0;
+        this.#panVelocity.x = 0;
+        this.#panVelocity.y = 0;
 
         this.#requestAnimation();
       }
@@ -285,26 +299,30 @@
       #animate(dt) {
         if (this.#pressedPointerHistory.size === 0) {
 
-          this.#camera.x += this.#velocity.x * dt;
-          this.#camera.y += this.#velocity.y * dt;
-          this.#velocity.x *= .95;
-          this.#velocity.y *= .95;
+          this.#camera.x += this.#panVelocity.x * dt;
+          this.#camera.y += this.#panVelocity.y * dt;
+          this.#panVelocity.x *= .95;
+          this.#panVelocity.y *= .95;
 
           const targetWorldPos = this.#camera.screenToWorld(this.#animatedScaleFocus.x, this.#animatedScaleFocus.y, this.#canvas.width, this.#canvas.height);
           this.#camera.scale *= Math.exp(this.#scaleVelocity * dt);
           const scaledWorldPos = this.#camera.screenToWorld(this.#animatedScaleFocus.x, this.#animatedScaleFocus.y, this.#canvas.width, this.#canvas.height);
           this.#camera.x += targetWorldPos.x - scaledWorldPos.x;
           this.#camera.y += targetWorldPos.y - scaledWorldPos.y;
-          this.#scaleVelocity *= .8;
+          if (this.#scaleVelocityIsFromPinch) {
+            this.#scaleVelocity *= .9;
+          } else {
+            this.#scaleVelocity *= .8;
+          }
 
-          if (Math.abs(this.#scaleVelocity) > .0001 || this.#camera.worldToScreenDistance(Math.hypot(this.#velocity.x, this.#velocity.y)) > .01) {
+          if (Math.abs(this.#scaleVelocity) > .0001 || this.#camera.worldToScreenDistance(Math.hypot(this.#panVelocity.x, this.#panVelocity.y)) > .01) {
             this.#requestAnimation();
             return;
           }
         }
         this.#previousFrameTimeStamp = null;
-        this.#velocity.x = 0;
-        this.#velocity.y = 0;
+        this.#panVelocity.x = 0;
+        this.#panVelocity.y = 0;
         this.#scaleVelocity = 0;
       }
     }
@@ -349,6 +367,7 @@
         hudX.style.display = 'block';
         hudZ.style.display = 'block';
       }
+      requestRender();
     });
 
 
