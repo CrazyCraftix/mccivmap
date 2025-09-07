@@ -411,7 +411,7 @@
 
     (async () => {
       window.dispatchEvent(new Event('resize'));
-      const res = await fetch("map.png");
+      const res = await fetch('mapdata/usgsmap_day6_contributions_v2.png');
       const blob = await res.blob();
       worldBitmap = await createImageBitmap(blob);
       let scaleX = mainCanvas.width / (worldBitmap.width * 1.1);
