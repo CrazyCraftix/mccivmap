@@ -522,7 +522,7 @@
     (async () => {
       window.dispatchEvent(new Event('resize'));
       await document.fonts.load('32px MinecraftItalic');
-      const res = await fetch('/mapdata/usgsmap_day6_contributions_v2.png');
+      const res = await fetch('/mapdata/usgsmap_day8_contributions_v1.png');
       const blob = await res.blob();
       worldBitmap = await createImageBitmap(blob);
       let scaleX = mainCanvas.width / (worldBitmap.width * 1.1);
