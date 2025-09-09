@@ -7,7 +7,7 @@
   <title>mccivmap</title>
   <style>
     body { margin: 0; background: #000; color: #fff; font: 14px system-ui; }
-    #main-canvas { position: fixed; inset: 0; touch-action: none; }
+    #main-canvas { position: fixed; width: 100%; height: 100%; touch-action: none; }
     #hud-x,#hud-z { display: none; background: #0008; position: fixed; top: 12px; padding: .3rem .6rem; border-radius: .4rem; pointer-events: none; font-variant-numeric: tabular-nums; }
     #hud-x { right: 50%; border-top-right-radius: 0; border-bottom-right-radius: 0; text-align: right; }
     #hud-z { left: 50%; border-top-left-radius: 0; border-bottom-left-radius: 0; text-align: left; }
@@ -155,9 +155,13 @@
           history.shift();
         }
 
+        const cssToDevicePixelRatio = window.devicePixelRatio || 1;
+        const ex = e.x * cssToDevicePixelRatio;
+        const ey = e.y * cssToDevicePixelRatio;
+
         let newEvent = {
-          x: e.x,
-          y: e.y,
+          x: ex,
+          y: ey,
           time: e.timeStamp,
         };
         history.push(newEvent);
@@ -174,11 +178,15 @@
       }
 
       #pointerDown(e) {
+        const cssToDevicePixelRatio = window.devicePixelRatio || 1;
+        const ex = e.x * cssToDevicePixelRatio;
+        const ey = e.y * cssToDevicePixelRatio;
+
         // ignore right click
         if (e.pointerType === 'mouse' && e.button === 2) return;
 
         this.#addEventToPressedPointerHistory(e);
-        this.#appendPinchScaleHistory(this.#camera.scale, e.x, e.y, e.timeStamp);
+        this.#appendPinchScaleHistory(this.#camera.scale, ex, ey, e.timeStamp);
         this.#canvas.setPointerCapture(e.pointerId);
       }
 
@@ -245,8 +253,12 @@
         if (this.#pressedPointerHistory.get(e.pointerId) === undefined) return;
 
         if (this.#pressedPointerHistory.size === 1) {
+          const cssToDevicePixelRatio = window.devicePixelRatio || 1;
+          const ex = e.x * cssToDevicePixelRatio;
+          const ey = e.y * cssToDevicePixelRatio;
+
           // scale velocity
-          this.#appendPinchScaleHistory(this.#camera.scale, e.x, e.y, e.timeStamp);
+          this.#appendPinchScaleHistory(this.#camera.scale, ex, ey, e.timeStamp);
           this.#calculateScaleVelocity();
 
           if (this.#scaleVelocity === 0) {
@@ -269,21 +281,26 @@
         e.preventDefault();
         if (e.deltaY === 0) return;
 
+        const cssToDevicePixelRatio = window.devicePixelRatio || 1;
+        const ex = e.x * cssToDevicePixelRatio;
+        const ey = e.y * cssToDevicePixelRatio;
+        const edeltaY = e.deltaY * cssToDevicePixelRatio;
+
         let scaleFactor;
         if (e.deltaMode === WheelEvent.DOM_DELTA_PIXEL) {
-          scaleFactor = Math.pow(1.1, -e.deltaY/120);
+          scaleFactor = Math.pow(1.1, -edeltaY/120);
         } else {
-          scaleFactor = (e.deltaY > 0 ? 1/1.1 : 1.1);
+          scaleFactor = (edeltaY > 0 ? 1/1.1 : 1.1);
         }
 
-        const scaleVelocityChange = -e.deltaY/40000;
+        const scaleVelocityChange = -edeltaY/40000;
         if (Math.sign(this.#scaleVelocity) !== Math.sign(scaleVelocityChange)) {
           this.#scaleVelocity = 0;
         }
         this.#scaleVelocity += scaleVelocityChange;
         this.#scaleVelocityIsFromPinch = false;
-        this.#animatedScaleFocus.x = e.x;
-        this.#animatedScaleFocus.y = e.y;
+        this.#animatedScaleFocus.x = ex;
+        this.#animatedScaleFocus.y = ey;
 
         this.#panVelocity.x = 0;
         this.#panVelocity.y = 0;
@@ -432,7 +449,10 @@
     // ========== COORDS  ==========
     mainCanvas.addEventListener('contextmenu', e => {
       e.preventDefault();
-      let newClickedWorldCoords = mainCamera.screenToWorld(e.x, e.y, mainCanvas.width, mainCanvas.height);
+      const cssToDevicePixelRatio = window.devicePixelRatio || 1;
+      const ex = e.x * cssToDevicePixelRatio;
+      const ey = e.y * cssToDevicePixelRatio;
+      let newClickedWorldCoords = mainCamera.screenToWorld(ex, ey, mainCanvas.width, mainCanvas.height);
       newClickedWorldCoords.x = Math.floor(newClickedWorldCoords.x);
       newClickedWorldCoords.y = Math.floor(newClickedWorldCoords.y);
       if (clickedWorldCoords != null && newClickedWorldCoords.x === clickedWorldCoords.x && newClickedWorldCoords.y === clickedWorldCoords.y) {
@@ -470,7 +490,7 @@
 
       ctx.resetTransform();
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-      ctx.imageSmoothingEnabled = camera.scale < 1;
+      ctx.imageSmoothingEnabled = false;//camera.scale < 1;
 
       camera.apply(ctx);
 
@@ -496,8 +516,8 @@
     }
 
     function drawPin(ctx, x, y, color = '#F00') {
-      const pinWidth = 24;
-      const pinHeight = 20;
+      const pinWidth = 32;
+      const pinHeight = 26;
       ctx.fillStyle = color;
       ctx.lineWidth = 2;
       ctx.strokeStyle = '#000';
@@ -514,8 +534,11 @@
 
     // ========== EVENTS ==========
     window.addEventListener('resize', () => {
-      mainCanvas.width = window.innerWidth;
-      mainCanvas.height = window.innerHeight;
+      const cssToDevicePixelRatio = window.devicePixelRatio || 1;
+      let screenWidthInCssPixels = window.visualViewport?.width || window.innerWidth;
+      let screenHeightInCssPixels = window.visualViewport?.height || window.innerHeight;
+      mainCanvas.width = Math.round(screenWidthInCssPixels * cssToDevicePixelRatio);
+      mainCanvas.height = Math.round(screenHeightInCssPixels * cssToDevicePixelRatio);
       requestRender();
     });
 
