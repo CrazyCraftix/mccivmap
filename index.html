@@ -150,7 +150,7 @@
         };
 
         // prune old events
-        const cutoff = e.timeStamp - 20;
+        const cutoff = e.timeStamp - 50;
         while (history.length > 0 && history[0].time < cutoff) {
           history.shift();
         }
