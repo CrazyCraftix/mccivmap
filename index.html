@@ -31,6 +31,35 @@
   <script>
     'use strict';
 
+    // ========== UTIL ==========
+    function* boundedDiamondPattern(centerX, centerY, minX, minY, maxX, maxY) {
+      yield { x: centerX, y: centerY };
+
+      let yieldCount = 1;
+      const totalYields = (maxX - minX + 1) * (maxY - minY + 1);
+
+      for(let radius = 0; yieldCount < totalYields; radius++) {
+        for(let i = 0; i < radius; i++) {
+          const tileCoords = [
+            { dx:  i,          dy:  radius - i },
+            { dx: -i,          dy:  i - radius },
+            { dx:  radius - i, dy: -i          },
+            { dx:  i - radius, dy:  i          },
+          ];
+          for (const { dx, dy } of tileCoords) {
+            const tileX = centerX + dx;
+            if (tileX < minX || tileX > maxX) continue;
+            const tileY = centerY + dy;
+            if (tileY < minY || tileY > maxY) continue;
+            yieldCount++;
+            yield { x: tileX, y: tileY };
+          }
+        }
+      }
+    }
+
+
+
     // ========== CAMERA ==========
     class Camera {
       #x = 0;
@@ -68,17 +97,19 @@
       screenToWorldDistance(value) { return value / this.#scale; }
 
       apply(ctx) {
-        ctx.translate(ctx.canvas.width/2, ctx.canvas.height/2)
-        ctx.scale(this.#scale, this.#scale);
+        // quantize scale to hide tile seams
+        const lod = Math.max(0, Math.floor(-Math.log(this.#scale)/Math.log(2)));
+        const lodPow = Math.pow(2, lod);
+        const tileSize = TILE_SIZE * lodPow;
+        const quantizedScale = Math.round(this.#scale * tileSize) / tileSize;
+        //const quantizedScale = this.#scale;
 
-        // quantize position to screen pixel to reduce flimmer
-        const quantization = this.screenToWorldDistance(1);
-        const quantizedPos = {
-          x: Math.round(this.#x / quantization) * quantization,
-          y: Math.round(this.#y / quantization) * quantization
+        // quantize translation to reduce flimmer
+        const quantizedTranslation = {
+          x: Math.round(ctx.canvas.width /2 - quantizedScale * this.#x),
+          y: Math.round(ctx.canvas.height/2 - quantizedScale * this.#y),
         };
-
-        ctx.translate(-quantizedPos.x, -quantizedPos.y);
+        ctx.setTransform(quantizedScale, 0, 0, quantizedScale, quantizedTranslation.x, quantizedTranslation.y);
       }
 
       addChangeCallback(changeCallback) {
@@ -91,6 +122,9 @@
     }
 
     class PanZoomController {
+      #maxScale = 1000;
+      #minScale = .07;
+
       #camera;
       #canvas;
       #pinchScaleHistory = []; // { scale, screenSpaceScaleFocus: { x, y }, time }
@@ -213,6 +247,7 @@
         const oldWorldPos = this.#camera.screenToWorld(oldCenter.x, oldCenter.y, this.#canvas.width, this.#canvas.height);
         const pointerCount = this.#globalPressedPointerStats.pointerCount;
         this.#camera.scale *= (oldDistance === 0) ? 1 : Math.pow(newDistance/oldDistance, pointerCount-1);
+        this.#camera.scale = Math.min(Math.max(this.#camera.scale, this.#minScale), this.#maxScale);
         const newWorldPos = this.#camera.screenToWorld(newCenter.x, newCenter.y, this.#canvas.width, this.#canvas.height);
         this.#camera.x += oldWorldPos.x - newWorldPos.x;
         this.#camera.y += oldWorldPos.y - newWorldPos.y;
@@ -340,6 +375,7 @@
 
           const targetWorldPos = this.#camera.screenToWorld(this.#animatedScaleFocus.x, this.#animatedScaleFocus.y, this.#canvas.width, this.#canvas.height);
           this.#camera.scale *= Math.exp(this.#scaleVelocity * dt);
+          this.#camera.scale = Math.min(Math.max(this.#camera.scale, this.#minScale), this.#maxScale);
           const scaledWorldPos = this.#camera.screenToWorld(this.#animatedScaleFocus.x, this.#animatedScaleFocus.y, this.#canvas.width, this.#canvas.height);
           this.#camera.x += targetWorldPos.x - scaledWorldPos.x;
           this.#camera.y += targetWorldPos.y - scaledWorldPos.y;
@@ -363,8 +399,294 @@
 
 
 
-    // ========== LABELS ==========
+    // ========== LAYERS ==========
+    const TILE_SIZE = 512;
+    let DEBUG_FETCHSTOP = false;
+    class MapLayer {
+      // create MapLayer's
+      static async fromUrl(url, onTile) {
+        if (url.endsWith('.png')) {
+          const res = await fetch(url);
+          const blob = await res.blob();
+          const image = await createImageBitmap(blob);
+          const fileName = url.substring(url.lastIndexOf('/') + 1);
+          return await MapLayer.fromImage(image, onTile, fileName);
+        }
+        // fetch lod file list
+        const tileListUrl = `${url}/tile_list.txt`;
+        const tileListResponse = await fetch(tileListUrl);
+        if (!tileListResponse.ok) {
+          throw new Error(`failed to fetch tile list from ${tileListUrl}: ${tileListResponse.status} ${tileListResponse.statusText}`);
+        }
+        const tileList = new Set((await tileListResponse.text()).split('\n'));
 
+        const mapLayer = new MapLayer((lod, x, y) => MapLayer.#fetchTileFromUrl(lod, x, y, url, tileList), onTile);
+
+        // fetch metadata
+        const metadataUrl = `${url}/metadata.json`;
+        const matadataResponse = await fetch(metadataUrl);
+        if (!matadataResponse.ok) {
+          throw new Error(`failed to fetch map metadata from ${metadataUrl}: ${matadataResponse.status} ${matadataResponse.statusText}`);
+        }
+        try {
+          mapLayer.metadata = JSON.parse(await matadataResponse.text());
+        } catch (parseError) {
+          throw new Error(`could not parse map metadata from ${metadataUrl}: ${parseError.message}`);
+        }
+
+        return mapLayer;
+      }
+
+      static async fromImage(image, onTile, fileName = '') {
+        const matchesX = [...fileName.matchAll(/x(-?\d+)/g)];
+        const matchesZ = [...fileName.matchAll(/z(-?\d+)/g)];
+        const topLeftX = (matchesX.length > 0) ? parseInt(matchesX.at(-1)[1], 10) : NaN;
+        const topLeftY = (matchesZ.length > 0) ? parseInt(matchesZ.at(-1)[1], 10) : NaN;
+        const processed = await MapLayer.#preprocessMapImage(image, topLeftX, topLeftY);
+        if (processed == null) return null;
+        const mapLayer = new MapLayer(
+          (lod, x, y) => MapLayer.#createTileFromImage(lod, x, y, processed.image, processed.topLeftX, processed.topLeftY),
+          onTile
+        );
+        mapLayer.metadata = {
+          width: processed.image.width,
+          height: processed.image.height,
+          topLeft: {
+            x: processed.topLeftX,
+            y: processed.topLeftY,
+          }
+        };
+        return mapLayer;
+      }
+
+      // crops black pixels and makes remaining black pixels transparent
+      // notes:
+      // - returns null if bitmap is completely black
+      // (mapImage: ImageBitmap) -> ImageBitmap
+      static async #preprocessMapImage(mapImage, topLeftX, topLeftY) {
+        const width = mapImage.width;
+        const height = mapImage.height;
+
+        // convert bitmap to canvas
+        const canvas = new OffscreenCanvas(width, height);
+        const canvasContext = canvas.getContext('2d');
+        canvasContext.drawImage(mapImage, 0, 0);
+
+        // make black pixels transparent and find bounding rectangle of non-black pixels
+        let minX = width;
+        let minY = height;
+        let maxX = -1;
+        let maxY = -1;
+        const imageData = canvasContext.getImageData(0, 0, width, height);
+        const pixels = imageData.data;
+        for (let y = 0, i = 0; y < height; y++) {
+          for (let x = 0; x < width; x++, i += 4) {
+            // check if r, g and b are all 0 (i.e. the pixel is black)
+            if ((pixels[i] | pixels[i+1] | pixels[i+2]) === 0) {
+              pixels[i+3] = 0; // make pixel transparent
+            } else {
+              pixels[i+3] = 255; // ensure pixel is opaque
+              if (x < minX) minX = x;
+              if (y < minY) minY = y;
+              if (x > maxX) maxX = x;
+              if (y > maxY) maxY = y;
+            }
+          }
+        }
+        if (maxX < minX) return null; // all pixels were black and would now be transparent
+        canvasContext.putImageData(imageData, 0, 0);
+
+        // crop image and return it
+        const croppedWidth = maxX - minX + 1;
+        const croppedHeight = maxY - minY + 1;
+        return {
+          image: await createImageBitmap(canvas, minX, minY, croppedWidth, croppedHeight),
+          topLeftX: (topLeftX + minX) || 0,
+          topLeftY: (topLeftY + minY) || 0,
+        };
+      }
+
+
+      // obtain tiles
+      static async #fetchTileFromUrl(lod, x, y, url, tileList) {
+        const fileName = `lod${lod}_x${x}_z${y}.png`;
+        if (!tileList.has(fileName)) return null;
+
+        const res = await fetch(`${url}/${fileName}`);
+        if (res.status === 404) return null;
+        if (!res.ok) throw new Error(`failed to fetch lod: ${res.status}`);
+        const blob = await res.blob();
+        return await createImageBitmap(blob);
+      }
+
+      static async #createTileFromImage(lod, x, y, image, topLeftX, topLeftY) {
+        const tileSize = TILE_SIZE * Math.pow(2, lod);
+        //const offsetX = 3453 - 7578 + 317 - x * tileSize;
+        //const offsetY = 1213 - 3746 +  21 - y * tileSize;
+        const offsetX = topLeftX - x * tileSize;
+        const offsetY = topLeftY - y * tileSize;
+
+        // requested tile is outside of image
+        if (offsetX < -image.width || offsetY < -image.height) return null;
+        if (offsetX > tileSize || offsetY > tileSize) return null;
+
+        await new Promise(r => setTimeout(r, Math.floor(Math.random() * 100) + 100));
+        const osc = new OffscreenCanvas(TILE_SIZE, TILE_SIZE);
+        const ctx = osc.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+        ctx.clearRect(0, 0, osc.width, osc.height);
+        ctx.drawImage(image, -offsetX, -offsetY, tileSize, tileSize, 0, 0, osc.width, osc.height);
+        const data = ctx.getImageData(0, 0, osc.width, osc.height).data;
+
+        // skip fully transparent tiles
+        for (let i = 3; i < data.length; i += 4) {
+          if (data[i] !== 0) {
+            return osc.transferToImageBitmap();
+          }
+        }
+        return null;
+      }
+
+
+
+      #fetchTile;
+      #onTile;
+
+      metadata;
+
+      #maxConcurrentFetches = 6;
+      #tiles = new Map();
+      #inflight = new Set();
+      #nonExistentTiles = new Set();
+      #queue = null;
+
+      constructor(fetchTile, onTile) {
+        this.#fetchTile = fetchTile;
+        this.#onTile = onTile;
+        Object.seal(this);
+      }
+
+      async exportLods() {
+        const metadataBlob = new Blob([JSON.stringify(this.metadata)], { type: "application/json" });
+        const blobs = [{ name: 'metadata.json', blob: metadataBlob }];
+
+        let lodFileNames = [];
+
+        const canvas = new OffscreenCanvas(TILE_SIZE, TILE_SIZE);
+        const ctx = canvas.getContext("2d");
+        for (const [key, tile] of this.#tiles.entries()) {
+          const { x, y, lod } = this.#unpackKey(key);
+          const name = `lod${lod}_x${x}_z${y}.png`;
+          lodFileNames.push(name);
+          console.log(name);
+
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(tile, 0, 0);
+          blobs.push({ name, blob: await canvas.convertToBlob() });
+        }
+
+        let lodFileNamesBlob = new Blob([lodFileNames.sort().join('\n')], { type: 'text/plain' });
+        blobs.push({ name: 'tile_list.txt', blob: lodFileNamesBlob });
+
+        return blobs;
+      }
+
+      // assumes camera.apply(canvasContext) has been called already
+      draw(canvasContext, camera) {
+        const canvasWorldWidth = camera.screenToWorldDistance(canvasContext.canvas.width);
+        const canvasWorldHeight = camera.screenToWorldDistance(canvasContext.canvas.height);
+
+        const lod = Math.max(0, Math.floor(-Math.log(camera.scale)/Math.log(2)));
+        let tileSize = TILE_SIZE * Math.pow(2, lod);
+
+        const minTileX = Math.floor((camera.x - canvasWorldWidth  / 2) / tileSize);
+        const minTileY = Math.floor((camera.y - canvasWorldHeight / 2) / tileSize);
+        const maxTileX = Math.floor((camera.x + canvasWorldWidth  / 2) / tileSize);
+        const maxTileY = Math.floor((camera.y + canvasWorldHeight / 2) / tileSize);
+
+        for (let tileX = minTileX; tileX <= maxTileX; tileX++) {
+          for (let tileY = minTileY; tileY <= maxTileY; tileY++) {
+            let image = undefined;
+            let lodOffset = 0;
+            let lodOffsetPow;
+            while (lodOffset < 4) {
+              lodOffsetPow = Math.pow(2, lodOffset);
+              image = this.#tiles.get(this.#tileKey(Math.floor(tileX/lodOffsetPow), Math.floor(tileY/lodOffsetPow), lod  + lodOffset));
+              if (image !== undefined) break;
+              lodOffset += 1;
+            }
+            if (image === undefined) continue;
+            const fromX = ((tileX % lodOffsetPow) + lodOffsetPow) % lodOffsetPow / lodOffsetPow * image.width;
+            const fromY = ((tileY % lodOffsetPow) + lodOffsetPow) % lodOffsetPow / lodOffsetPow * image.height;
+            canvasContext.drawImage(image, fromX, fromY, image.width / lodOffsetPow, image.height / lodOffsetPow, tileX * tileSize, tileY * tileSize, tileSize, tileSize);
+          }
+        }
+
+        const centerTileX = Math.floor(camera.x / tileSize);
+        const centerTileY = Math.floor(camera.y / tileSize);
+
+        this.#queue =
+          (function* (lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY) {
+            for (; lod >= 0; lod--) {
+              for (const { x, y } of boundedDiamondPattern(centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY)) {
+                yield { x, y, lod };
+              }
+              centerTileX = Math.floor(centerTileX * 2);
+              centerTileY = Math.floor(centerTileY * 2);
+              minTileX = Math.floor(minTileX * 2);
+              minTileY = Math.floor(minTileY * 2);
+              maxTileX = Math.floor(maxTileX * 2);
+              maxTileY = Math.floor(maxTileY * 2);
+            }
+          })(lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY)
+          .map( ({x, y, lod }) => ({x, y, lod, key: this.#tileKey(x, y, lod)}) )
+          .filter( ({x, y, lod, key}) => !this.#tiles           .has(key) )
+          .filter( ({x, y, lod, key}) => !this.#inflight        .has(key) )
+          .filter( ({x, y, lod, key}) => !this.#nonExistentTiles.has(key) );
+
+        this.#triggerFetches();
+      }
+
+      #triggerFetches() {
+        if (DEBUG_FETCHSTOP) return;
+        while (this.#inflight.size < this.#maxConcurrentFetches) {
+          const tile = this.#queue.next().value;
+          if (tile === undefined) return;
+          this.#inflight.add(tile.key);
+          this.#fetchTile(tile.lod, tile.x, tile.y)
+            .then(image => {
+              if (image === null) {
+                this.#nonExistentTiles.add(tile.key)
+              } else {
+                this.#tiles.set(tile.key, image);
+                this.#onTile();
+              }
+            })
+            .catch(error => {
+              // TODO
+            })
+            .finally(() => {
+              this.#inflight.delete(tile.key);
+              this.#triggerFetches();
+            });
+        }
+      }
+
+      #tileKey(x, y, lod) {
+        return (x + 0x800000) * (1 << 28) + (y + 0x800000) * (1 << 4) + lod;
+      }
+
+      #unpackKey(key) {
+        const lod = key & 0xF;
+        const y   = ((key >> 4) & 0xFFFFFF) - 0x800000;
+        const x   = Math.floor(key / (1 << 28)) - 0x800000;
+        return { x, y, lod };
+      }
+    }
+
+
+
+    // ========== LABELS ==========
     class Label {
       #text;
       #position;
@@ -411,9 +733,7 @@
     const mainCamera = new Camera();
     const cameraPanZoomController = new PanZoomController(mainCamera, mainCanvas);
 
-    let worldBitmap = null;
-    let worldOffsetX = 0;
-    let worldOffsetY = 0;
+    let mainLayer = null;
 
     let animationFrameRequested = false;
 
@@ -482,7 +802,7 @@
 
 
     // ========== RENDER ==========
-    mainCamera.addChangeCallback(() => { requestRender(); })
+    mainCamera.addChangeCallback(() => { requestRender(); });
 
     function requestRender() {
       if (animationFrameRequested) return;
@@ -494,17 +814,13 @@
     }
 
     function render(ctx, camera) {
-      if (worldBitmap === null) return;
-
       ctx.resetTransform();
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       ctx.imageSmoothingEnabled = false;//camera.scale < 1;
 
       camera.apply(ctx);
 
-      if (worldBitmap !== null) {
-        ctx.drawImage(worldBitmap, worldOffsetX, worldOffsetY);
-      }
+      if (mainLayer !== null) mainLayer.draw(ctx, camera);
 
       ctx.resetTransform();
 
@@ -540,6 +856,95 @@
 
 
 
+    // ========== TOOLING ==========
+    // downloadZip([{ name, blob }, ...], "archive.zip")
+    async function downloadZip(files, zipName = 'archive.zip') {
+      const te = new TextEncoder();
+      const u16 = v => new Uint8Array([v & 255, v >> 8 & 255]);
+      const u32 = v => new Uint8Array([v & 255, v >> 8 & 255, v >> 16 & 255, v >> 24 & 255]);
+
+      // CRC32 table + fn
+      const TABLE = (() => {
+        const t = new Uint32Array(256);
+        for (let i = 0; i < 256; i++) { let c = i; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[i] = c >>> 0; }
+        return t;
+      })();
+      const crc32 = bytes => { let c = ~0; for (let b of bytes) c = TABLE[(c ^ b) & 255] ^ (c >>> 8); return (c ^ -1) >>> 0; };
+
+      const body = [], central = [];
+      let offset = 0;
+
+      for (let i = 0; i < files.length; i++) {
+        const name = te.encode(files[i].name || `file${i}`);
+        const data = new Uint8Array(await files[i].blob.arrayBuffer());
+        const crc = crc32(data), size = data.length, localOffset = offset;
+
+        // --- local file header ---
+        body.push(
+          u32(0x04034b50),   // local sig
+          u16(20),           // version
+          u16(0x0800),       // flags (UTF-8)
+          u16(0),            // method (0 = store)
+          u16(0), u16(0),    // time/date
+          u32(crc),          // crc32
+          u32(size),         // comp size
+          u32(size),         // uncomp size
+          u16(name.length),  // name len
+          u16(0),            // extra len
+          name,              // filename
+          data               // file data
+        );
+        offset += 30 + name.length + size;
+
+        // --- central directory entry ---
+        central.push(
+          u32(0x02014b50),   // central sig
+          u16(20), u16(20),  // version made/needed
+          u16(0x0800),       // flags (UTF-8)
+          u16(0),            // method
+          u16(0), u16(0),    // time/date
+          u32(crc),
+          u32(size), u32(size),
+          u16(name.length),
+          u16(0), u16(0),    // extra/comment len
+          u16(0), u16(0),    // disk/internal attrs
+          u32(0),            // external attrs
+          u32(localOffset),  // local header offset
+          name
+        );
+      }
+
+      const centralSize = central.reduce((n, b) => n + b.length, 0);
+      const centralStart = offset;
+
+      // --- end of central dir ---
+      const end = [
+        u32(0x06054b50), // end sig
+        u16(0), u16(0),  // disk nums
+        u16(files.length), u16(files.length), // counts
+        u32(centralSize),
+        u32(centralStart),
+        u16(0)           // comment len
+      ];
+
+      // zip blob
+      const zipBlob = new Blob([...body, ...central, ...end], { type: "application/zip" });
+
+      // trigger download
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = zipName;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    async function downloadLods() {
+      downloadZip(await mainLayer.exportLods());
+    }
+
+
+
     // ========== EVENTS ==========
     window.addEventListener('resize', () => {
       const cssToDevicePixelRatio = window.devicePixelRatio || 1;
@@ -553,16 +958,15 @@
     (async () => {
       window.dispatchEvent(new Event('resize'));
       await document.fonts.load('32px MinecraftItalic');
-      const res = await fetch('/mapdata/usgsmap_day9_contributions_v1.png');
-      const blob = await res.blob();
-      worldBitmap = await createImageBitmap(blob);
-      let scaleX = mainCanvas.width / (worldBitmap.width * 1.1);
-      let scaleY = mainCanvas.height / (worldBitmap.height * 1.1);
+
+      mainLayer = await MapLayer.fromUrl( '/mapdata/usgs_day10_v1', () => { requestRender(); } );
+
+      let scaleX = mainCanvas.width / (mainLayer.metadata.width * 1.1);
+      let scaleY = mainCanvas.height / (mainLayer.metadata.height * 1.1);
       mainCamera.scale = Math.min(scaleX, scaleY);
-      mainCamera.x = 0;
-      mainCamera.y = 0;
-      worldOffsetX = 3453 - 7578;
-      worldOffsetY = 1213 - 3746;
+      mainCamera.x = mainLayer.metadata.topLeft.x + mainLayer.metadata.width /2;
+      mainCamera.y = mainLayer.metadata.topLeft.y + mainLayer.metadata.height/2;
+
       document.getElementById('loading').remove();
       let urlCoords = window.location.search.slice(1).split(',').map(Number);
       if (urlCoords.length == 2 && !Number.isNaN(urlCoords[0]) && !Number.isNaN(urlCoords[1])) {
