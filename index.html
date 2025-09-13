@@ -404,34 +404,34 @@
     let DEBUG_FETCHSTOP = false;
     class MapLayer {
       // create MapLayer's
-      static async fromUrl(url, onTile) {
-        if (url.endsWith('.png')) {
-          const res = await fetch(url);
+      static async fromPath(path, onTile) {
+        if (path.endsWith('.png')) {
+          const res = await fetch(path);
           const blob = await res.blob();
           const image = await createImageBitmap(blob);
-          const fileName = url.substring(url.lastIndexOf('/') + 1);
+          const fileName = path.substring(path.lastIndexOf('/') + 1);
           return await MapLayer.fromImage(image, onTile, fileName);
         }
         // fetch lod file list
-        const tileListUrl = `${url}/tile_list.txt`;
-        const tileListResponse = await fetch(tileListUrl);
+        const tileListPath = `${path}/tile_list.txt`;
+        const tileListResponse = await fetch(tileListPath);
         if (!tileListResponse.ok) {
-          throw new Error(`failed to fetch tile list from ${tileListUrl}: ${tileListResponse.status} ${tileListResponse.statusText}`);
+          throw new Error(`failed to fetch tile list from ${tileListPath}: ${tileListResponse.status} ${tileListResponse.statusText}`);
         }
         const tileList = new Set((await tileListResponse.text()).split('\n'));
 
-        const mapLayer = new MapLayer((lod, x, y) => MapLayer.#fetchTileFromUrl(lod, x, y, url, tileList), onTile);
+        const mapLayer = new MapLayer((lod, x, y) => MapLayer.#fetchTileFromPath(lod, x, y, path, tileList), onTile);
 
         // fetch metadata
-        const metadataUrl = `${url}/metadata.json`;
-        const matadataResponse = await fetch(metadataUrl);
+        const metadataPath = `${path}/metadata.json`;
+        const matadataResponse = await fetch(metadataPath);
         if (!matadataResponse.ok) {
-          throw new Error(`failed to fetch map metadata from ${metadataUrl}: ${matadataResponse.status} ${matadataResponse.statusText}`);
+          throw new Error(`failed to fetch map metadata from ${metadataPath}: ${matadataResponse.status} ${matadataResponse.statusText}`);
         }
         try {
           mapLayer.metadata = JSON.parse(await matadataResponse.text());
         } catch (parseError) {
-          throw new Error(`could not parse map metadata from ${metadataUrl}: ${parseError.message}`);
+          throw new Error(`could not parse map metadata from ${metadataPath}: ${parseError.message}`);
         }
 
         return mapLayer;
@@ -508,11 +508,11 @@
 
 
       // obtain tiles
-      static async #fetchTileFromUrl(lod, x, y, url, tileList) {
+      static async #fetchTileFromPath(lod, x, y, path, tileList) {
         const fileName = `lod${lod}_x${x}_z${y}.png`;
         if (!tileList.has(fileName)) return null;
 
-        const res = await fetch(`${url}/${fileName}`);
+        const res = await fetch(`${path}/${fileName}`);
         if (res.status === 404) return null;
         if (!res.ok) throw new Error(`failed to fetch lod: ${res.status}`);
         const blob = await res.blob();
@@ -556,7 +556,7 @@
 
       #maxConcurrentFetches = 6;
       #tiles = new Map();
-      #inflight = new Set();
+      #inflightTileKeys = new Set();
       #nonExistentTiles = new Set();
       #queue = null;
 
@@ -641,7 +641,7 @@
           })(lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY)
           .map( ({x, y, lod }) => ({x, y, lod, key: this.#tileKey(x, y, lod)}) )
           .filter( ({x, y, lod, key}) => !this.#tiles           .has(key) )
-          .filter( ({x, y, lod, key}) => !this.#inflight        .has(key) )
+          .filter( ({x, y, lod, key}) => !this.#inflightTileKeys.has(key) )
           .filter( ({x, y, lod, key}) => !this.#nonExistentTiles.has(key) );
 
         this.#triggerFetches();
@@ -649,10 +649,10 @@
 
       #triggerFetches() {
         if (DEBUG_FETCHSTOP) return;
-        while (this.#inflight.size < this.#maxConcurrentFetches) {
+        while (this.#inflightTileKeys.size < this.#maxConcurrentFetches) {
           const tile = this.#queue.next().value;
           if (tile === undefined) return;
-          this.#inflight.add(tile.key);
+          this.#inflightTileKeys.add(tile.key);
           this.#fetchTile(tile.lod, tile.x, tile.y)
             .then(image => {
               if (image === null) {
@@ -666,7 +666,7 @@
               // TODO
             })
             .finally(() => {
-              this.#inflight.delete(tile.key);
+              this.#inflightTileKeys.delete(tile.key);
               this.#triggerFetches();
             });
         }
@@ -686,39 +686,50 @@
 
 
 
-    // ========== LABELS ==========
-    class Label {
-      #text;
-      #position;
-      #fillStyle;
-      #strokeStyle;
-      #lineWidth;
-      constructor(text, worldX, worldY, fillStyle, strokeStyle = '#000', lineWidth = 10.) {
-        this.#text = text;
-        this.#position = { x: 0, y: 0 };
-        this.#position.x = worldX;
-        this.#position.y = worldY;
-        this.#fillStyle = fillStyle;
-        this.#strokeStyle = strokeStyle;
-        this.#lineWidth = lineWidth;
-        Object.seal(this);
-      }
+    // ========== MARKERS ==========
+    function drawMarker(marker, ctx, camera) {
+      drawMarker.icons = drawMarker.icons || new Map();
+      const icons = drawMarker.icons;
 
-      draw(ctx, camera) {
-        let screenPos = camera.worldToScreen(this.#position.x, this.#position.y, ctx.canvas.width, ctx.canvas.height);
+      const posX = marker.x || 0;
+      const posY = marker.z || 0;
 
-        let textScale = camera.scale < .5 ? camera.scale: .5;
+      const cssToDevicePixelRatio = window.devicePixelRatio || 1;
+      const screenPos = camera.worldToScreen(posX + .5, posY + .5, ctx.canvas.width, ctx.canvas.height);
 
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.font = `${100 * textScale}px MinecraftItalic`;
+      if (marker.text) {
+        const textSizeMap         = marker.textSizeMap             || 120;
+        const textSizeScreen      = marker.textSizeScreen          || 30;
+        ctx.textAlign             = marker.textAlign               || 'center';
+        ctx.textBaseline          = marker.textBaseline            || 'middle';
+        ctx.strokeStyle           = marker.textStrokeStyle         || '#000';
+        ctx.fillStyle             = marker.textFillStyle           || '#f00';
+        const lineWidthPercentage = marker.textLineWidthPercentage || .1;
 
-        ctx.strokeStyle = this.#strokeStyle;
-        ctx.lineWidth = this.#lineWidth*2 * textScale;
-        ctx.strokeText(this.#text, screenPos.x, screenPos.y);
+        const textSize = Math.min(textSizeMap * camera.scale, textSizeScreen * cssToDevicePixelRatio);
+        ctx.font = `${textSize}px MinecraftItalic`;
+        // * 2 because half of strokeText() is overdrawn by fillText()
+        ctx.lineWidth = lineWidthPercentage * 2 * textSize;
 
-        ctx.fillStyle = this.#fillStyle;
-        ctx.fillText(this.#text, screenPos.x, screenPos.y);
+        ctx.strokeText(marker.text, screenPos.x, screenPos.y);
+        ctx.fillText(marker.text, screenPos.x, screenPos.y);
+      } else if (marker.iconPath) {
+        const icon = icons.get(marker.iconPath);
+        if (icon === undefined) {
+          fetch(marker.iconPath)
+            .then(response => {
+              if (response.status === 404) icons.set(marker.iconPath, null);
+              else if (!response.ok) throw new Error(`failed to fetch icon: ${res.status}`);
+              else return response.blob();
+            })
+            .then(blob => createImageBitmap(blob))
+            .then(image => icons.set(marker.iconPath, image));
+        } else {
+          const iconScaleMap    = marker.iconScaleMap    || 12;
+          const iconScaleScreen = marker.iconScaleScreen || 3;
+          const iconScale = Math.min(iconScaleMap * camera.scale, iconScaleScreen * cssToDevicePixelRatio);
+          ctx.drawImage(icon, screenPos.x - icon.width/2 * iconScale, screenPos.y - icon.height/2 * iconScale, icon.width * iconScale, icon.height * iconScale);
+        }
       }
     }
 
@@ -739,23 +750,33 @@
 
     let clickedWorldCoords = null;
 
-    let showMapLabels = false;
-    let mapLabels = [
-      new Label('Renkai', 2244, -767, '#f300f3'),
-      new Label('Sarkovia', 943, -265, '#f90120'),
-      new Label('Imperium', 2656, 98, '#de8644'),
-      new Label('Checkerboard Union', 1421, 1124, '#b9bbcc'),
-      new Label('The SWTZ', -46, 1487, '#559b16'),
-      new Label('The Holy Hydra Empire', -1219, 445, '#f38912'),
-      new Label('Helioria', -1427, -960, '#bbdc65'),
-      new Label('Polestar', 1653, -273, '#6767ea'),
-      new Label('Cooked v2', -123, -389, '#01fefe'),
-      new Label('El Gran Cartel', -2416, 507, '#32ed22'),
-      new Label('Northelios', 2517, -1470, '#fe3333'),
-      new Label('Pantha', -123, -1346, '#43a6d9'),
-      new Label('Soup Bowl', -2910, -543, '#d1502f'),
-      new Label('Penguinia', 1583, -1323, '#8667de'),
-      new Label('Harvestspire', 3050, 1271, '#56935b'),
+    let showMarkers = false;
+    let markers = [
+      { x:  2784, z: -376, y:  125, iconPath: '/icons/redstone.png'     },
+      { x:   946, z: -374, y:  142, iconPath: '/icons/coal.png'         },
+      { x:   615, z:  -781, y:  98, iconPath: '/icons/diamond.png'      },
+      { x:  2433, z:  -661, y:  82, iconPath: '/icons/diamond.png'      },
+      { x:   958, z:   995, y:  92, iconPath: '/icons/gold_ingot.png'   },
+      { x:   896, z:  -356, y: 142, iconPath: '/icons/gold_ingot.png'   },
+      { x:  2738, z:   647, y:  78, iconPath: '/icons/iron_ingot.png'   },
+      { x:  1657, z:  -287, y:  69, iconPath: '/icons/iron_ingot.png'   },
+      { x:  1380, z:   630, y: 139, iconPath: '/icons/iron_ingot.png'   },
+      { x:  1478, z: -1467, y: 137, iconPath: '/icons/lapis_lazuli.png' },
+      { x:  2244, z:  -767, textFillStyle: '#f300f3', text: 'Renkai'                },
+      { x:   943, z:  -265, textFillStyle: '#f90120', text: 'Sarkovia'              },
+      { x:  2656, z:    98, textFillStyle: '#de8644', text: 'Imperium'              },
+      { x:  1421, z:  1124, textFillStyle: '#b9bbcc', text: 'Checkerboard Union'    },
+      { x:   -46, z:  1487, textFillStyle: '#559b16', text: 'The SWTZ'              },
+      { x: -1219, z:   445, textFillStyle: '#f38912', text: 'The Holy Hydra Empire' },
+      { x: -1427, z:  -960, textFillStyle: '#bbdc65', text: 'Helioria'              },
+      { x:  1670, z:  -365, textFillStyle: '#6767ea', text: 'Polestar'              },
+      { x:  -123, z:  -389, textFillStyle: '#01fefe', text: 'Cooked v2'             },
+      { x: -2416, z:   507, textFillStyle: '#32ed22', text: 'El Gran Cartel'        },
+      { x:  2517, z: -1470, textFillStyle: '#fe3333', text: 'Northelios'            },
+      { x:  -123, z: -1346, textFillStyle: '#43a6d9', text: 'Pantha'                },
+      { x: -2910, z: - 543, textFillStyle: '#d1502f', text: 'Soup Bowl'             },
+      { x:  1583, z: -1323, textFillStyle: '#8667de', text: 'Penguinia'             },
+      { x:  3050, z:  1271, textFillStyle: '#56935b', text: 'Harvestspire'          },
     ];
 
     document.addEventListener('keydown', e => {
@@ -767,7 +788,7 @@
           textbox2.textContent = 'WIP!!';
         }
         textbox2.hidden = !textbox2.hidden;
-        showMapLabels = !showMapLabels;
+        showMarkers = !showMarkers;
         requestRender();
       }
     });
@@ -824,11 +845,11 @@
 
       ctx.resetTransform();
 
-      if (showMapLabels) {
+      if (showMarkers) {
         ctx.fillStyle = '#0005';
         ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-        for (const label of mapLabels) {
-          label.draw(ctx, camera);
+        for (const marker of markers) {
+          drawMarker(marker, ctx, camera);
         }
       }
 
@@ -959,7 +980,7 @@
       window.dispatchEvent(new Event('resize'));
       await document.fonts.load('32px MinecraftItalic');
 
-      mainLayer = await MapLayer.fromUrl( '/mapdata/usgs_day10_v1', () => { requestRender(); } );
+      mainLayer = await MapLayer.fromPath( '/mapdata/usgs_day10_v1', () => { requestRender(); } );
 
       let scaleX = mainCanvas.width / (mainLayer.metadata.width * 1.1);
       let scaleY = mainCanvas.height / (mainLayer.metadata.height * 1.1);
