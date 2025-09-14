@@ -471,8 +471,8 @@
         const scaleX = canvas.width  / (screenWidth  * 1.1);
         const scaleY = canvas.height / (screenHeight * 1.1);
         camera.scale = Math.min(scaleX, scaleY);
-        camera.x = this.metadata.topLeft.x + screenWidth  / 2;
-        camera.y = this.metadata.topLeft.y + screenHeight / 2;
+        camera.x = this.metadata.topLeft.x * this.metadata.scale + screenWidth  / 2;
+        camera.y = this.metadata.topLeft.y * this.metadata.scale + screenHeight / 2;
       }
 
       // crops black pixels and makes remaining black pixels transparent
