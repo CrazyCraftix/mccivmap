@@ -21,7 +21,9 @@
   <span id="hud-x">0</span>
   <span id="hud-z">0</span>
   <div id="textbox" style="position:fixed;top:0;left:0;padding:6px;font:16px monospace;max-width:90vw;word-wrap:break-word;">
-    by @crazycraftix - TAB to show Labels
+    by @crazycraftix<br>
+    TAB to show LABELS<br>
+    NUMBERS switch MAPS
   </div>
   <script>
     'use strict';
@@ -91,13 +93,8 @@
       worldToScreenDistance(value) { return value * this.#scale; }
       screenToWorldDistance(value) { return value / this.#scale; }
 
-      apply(ctx) {
-        // quantize scale to hide tile seams
-        const lod = Math.max(0, Math.floor(-Math.log(this.#scale)/Math.log(2)));
-        const lodPow = Math.pow(2, lod);
-        const tileSize = TILE_SIZE * lodPow;
-        const quantizedScale = Math.round(this.#scale * tileSize) / tileSize;
-        //const quantizedScale = this.#scale;
+      apply(ctx, scaleQuantizationSize = null) {
+        const quantizedScale = (scaleQuantizationSize === null) ? this.#scale : Math.round(this.#scale * scaleQuantizationSize) / scaleQuantizationSize;
 
         // quantize translation to reduce flimmer
         const quantizedTranslation = {
@@ -146,6 +143,12 @@
         this.#canvas.addEventListener('pointerup',     e => { this.#pointerUpOrCancel(e); });
         this.#canvas.addEventListener('pointercancel', e => { this.#pointerUpOrCancel(e); });
         this.#canvas.addEventListener('wheel',         e => { this.#wheel(e); });
+      }
+
+      stop() {
+        this.#panVelocity.x = 0;
+        this.#panVelocity.y = 0;
+        this.#scaleVelocity = 0;
       }
 
       #removePointerFromPressedPointerHistory(pointerId) {
@@ -425,6 +428,8 @@
         }
         try {
           mapLayer.metadata = JSON.parse(await matadataResponse.text());
+          mapLayer.metadata.maxLod = mapLayer.metadata.maxLod || 0;
+          mapLayer.metadata.scale = mapLayer.metadata.scale || 1;
         } catch (parseError) {
           throw new Error(`could not parse map metadata from ${metadataPath}: ${parseError.message}`);
         }
@@ -433,10 +438,14 @@
       }
 
       static async fromImage(image, onTile, fileName = '') {
-        const matchesX = [...fileName.matchAll(/x(-?\d+)/g)];
-        const matchesZ = [...fileName.matchAll(/z(-?\d+)/g)];
-        const topLeftX = (matchesX.length > 0) ? parseInt(matchesX.at(-1)[1], 10) : NaN;
-        const topLeftY = (matchesZ.length > 0) ? parseInt(matchesZ.at(-1)[1], 10) : NaN;
+        const matchesX     = [...fileName.matchAll(/x(-?\d+(?:\.\d+)?)/g)];
+        const matchesZ     = [...fileName.matchAll(/z(-?\d+(?:\.\d+)?)/g)];
+        const matchesScale = [...fileName.matchAll(/scale(-?\d+(?:\.\d+)?)/g)];
+
+        const topLeftX = (matchesX    .length > 0) ? parseFloat(matchesX    .at(-1)[1]) : NaN;
+        const topLeftY = (matchesZ    .length > 0) ? parseFloat(matchesZ    .at(-1)[1]) : NaN;
+        const scale    = (matchesScale.length > 0) ? parseFloat(matchesScale.at(-1)[1]) : 1;
+
         const processed = await MapLayer.#preprocessMapImage(image, topLeftX, topLeftY);
         if (processed == null) return null;
         const mapLayer = new MapLayer(
@@ -451,8 +460,19 @@
             y: processed.topLeftY,
           },
           maxLod: 0,
+          scale: scale,
         };
         return mapLayer;
+      }
+
+      fitCamera(camera, canvas) {
+        const screenWidth  = this.metadata.width  * this.metadata.scale;
+        const screenHeight = this.metadata.height * this.metadata.scale;
+        const scaleX = canvas.width  / (screenWidth  * 1.1);
+        const scaleY = canvas.height / (screenHeight * 1.1);
+        camera.scale = Math.min(scaleX, scaleY);
+        camera.x = this.metadata.topLeft.x + screenWidth  / 2;
+        camera.y = this.metadata.topLeft.y + screenHeight / 2;
       }
 
       // crops black pixels and makes remaining black pixels transparent
@@ -529,7 +549,7 @@
         await new Promise(r => setTimeout(r, Math.floor(Math.random() * 100) + 100));
         const osc = new OffscreenCanvas(TILE_SIZE, TILE_SIZE);
         const ctx = osc.getContext('2d');
-        ctx.imageSmoothingEnabled = false;
+        ctx.imageSmoothingEnabled = true;
         ctx.clearRect(0, 0, osc.width, osc.height);
         ctx.drawImage(image, -offsetX, -offsetY, tileSize, tileSize, 0, 0, osc.width, osc.height);
         const data = ctx.getImageData(0, 0, osc.width, osc.height).data;
@@ -587,18 +607,26 @@
         return blobs;
       }
 
-      // assumes camera.apply(canvasContext) has been called already
+      calculateLod(camera) {
+        return Math.max(0, Math.floor(-Math.log(camera.scale * this.metadata.scale)/Math.log(2)));
+      }
+
+      calculateScreenSpaceTileSize(lod) {
+        return TILE_SIZE * Math.pow(2, lod) * this.metadata.scale;
+      }
+
+      // assumes camera.apply() has been called already
       draw(canvasContext, camera) {
         const canvasWorldWidth = camera.screenToWorldDistance(canvasContext.canvas.width);
         const canvasWorldHeight = camera.screenToWorldDistance(canvasContext.canvas.height);
 
-        const lod = Math.max(0, Math.floor(-Math.log(camera.scale)/Math.log(2)));
-        let tileSize = TILE_SIZE * Math.pow(2, lod);
+        const lod = this.calculateLod(camera);
+        const screenSpaceTileSize = this.calculateScreenSpaceTileSize(lod);
 
-        const minTileX = Math.floor((camera.x - canvasWorldWidth  / 2) / tileSize);
-        const minTileY = Math.floor((camera.y - canvasWorldHeight / 2) / tileSize);
-        const maxTileX = Math.floor((camera.x + canvasWorldWidth  / 2) / tileSize);
-        const maxTileY = Math.floor((camera.y + canvasWorldHeight / 2) / tileSize);
+        const minTileX = Math.floor((camera.x - canvasWorldWidth  / 2) / screenSpaceTileSize);
+        const minTileY = Math.floor((camera.y - canvasWorldHeight / 2) / screenSpaceTileSize);
+        const maxTileX = Math.floor((camera.x + canvasWorldWidth  / 2) / screenSpaceTileSize);
+        const maxTileY = Math.floor((camera.y + canvasWorldHeight / 2) / screenSpaceTileSize);
 
         for (let tileX = minTileX; tileX <= maxTileX; tileX++) {
           for (let tileY = minTileY; tileY <= maxTileY; tileY++) {
@@ -614,12 +642,22 @@
             if (image === undefined) continue;
             const fromX = ((tileX % lodOffsetPow) + lodOffsetPow) % lodOffsetPow / lodOffsetPow * image.width;
             const fromY = ((tileY % lodOffsetPow) + lodOffsetPow) % lodOffsetPow / lodOffsetPow * image.height;
-            canvasContext.drawImage(image, fromX, fromY, image.width / lodOffsetPow, image.height / lodOffsetPow, tileX * tileSize, tileY * tileSize, tileSize, tileSize);
+            canvasContext.drawImage(
+              image,
+              fromX,
+              fromY,
+              image.width / lodOffsetPow,
+              image.height / lodOffsetPow,
+              tileX * screenSpaceTileSize,
+              tileY * screenSpaceTileSize,
+              screenSpaceTileSize,
+              screenSpaceTileSize
+            );
           }
         }
 
-        const centerTileX = Math.floor(camera.x / tileSize);
-        const centerTileY = Math.floor(camera.y / tileSize);
+        const centerTileX = Math.floor(camera.x / screenSpaceTileSize);
+        const centerTileY = Math.floor(camera.y / screenSpaceTileSize);
 
         this.#queue =
           (function* (lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY, maxLod) {
@@ -754,7 +792,8 @@
     const mainCamera = new Camera();
     const cameraPanZoomController = new PanZoomController(mainCamera, mainCanvas);
 
-    let mainLayer = null;
+    let activeLayerIndex = 0;
+    let layers = [];
 
     let animationFrameRequested = false;
 
@@ -790,11 +829,21 @@
     ];
 
     document.addEventListener('keydown', e => {
-      if (e.key === 'Tab') {
+      if (e.code === 'Tab') {
         e.preventDefault();
         let textbox = document.getElementById('textbox').hidden = true;
         showMarkers = !showMarkers;
         requestRender();
+      } else if (e.code === 'Space') {
+        const activeLayer = layers.at(activeLayerIndex);
+        cameraPanZoomController.stop();
+        activeLayer.fitCamera(mainCamera, mainCanvas);
+      } else if ('0' <= e.key && e.key <= '9') {
+        const newIndex = e.key - 1; // coerce digit to number by subtracting
+        if (activeLayerIndex !== newIndex) {
+          activeLayerIndex = newIndex;
+          requestRender();
+        }
       }
     });
 
@@ -844,9 +893,18 @@
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       ctx.imageSmoothingEnabled = false;//camera.scale < 1;
 
-      camera.apply(ctx);
+      const activeLayer = layers.at(activeLayerIndex);
+      if (activeLayer) {
 
-      if (mainLayer !== null) mainLayer.draw(ctx, camera);
+      // quantize camera scale to hide tile seams
+      const lod = activeLayer.calculateLod(camera);
+      const tileSize = activeLayer.calculateScreenSpaceTileSize(lod);
+      camera.apply(ctx, tileSize);
+
+      if (activeLayer) activeLayer.draw(ctx, camera);
+      } else {
+        camera.apply
+      }
 
       ctx.resetTransform();
 
@@ -966,7 +1024,10 @@
     }
 
     async function downloadLods() {
-      downloadZip(await mainLayer.exportLods());
+      const activeLayer = layers.at(activeLayerIndex);
+      if (activeLayer) {
+        downloadZip(await activeLayer.exportLods());
+      }
     }
 
 
@@ -985,13 +1046,10 @@
       window.dispatchEvent(new Event('resize'));
       await document.fonts.load('32px MinecraftItalic');
 
-      mainLayer = await MapLayer.fromPath( 'mapdata/usgs_day11_v1', () => { requestRender(); } );
-
-      let scaleX = mainCanvas.width / (mainLayer.metadata.width * 1.1);
-      let scaleY = mainCanvas.height / (mainLayer.metadata.height * 1.1);
-      mainCamera.scale = Math.min(scaleX, scaleY);
-      mainCamera.x = mainLayer.metadata.topLeft.x + mainLayer.metadata.width /2;
-      mainCamera.y = mainLayer.metadata.topLeft.y + mainLayer.metadata.height/2;
+      const mainLayer = await MapLayer.fromPath( 'mapdata/usgs_day11_v1', () => { requestRender(); } );
+      cameraPanZoomController.stop();
+      mainLayer.fitCamera(mainCamera, mainCanvas);
+      layers.push(mainLayer);
 
       document.getElementById('loading').remove();
       let urlCoords = window.location.search.slice(1).split(',').map(Number);
@@ -1007,6 +1065,8 @@
       }
       window.setTimeout(() => { document.getElementById('textbox').hidden = true; }, 5000);
       requestRender();
+
+      layers.push(await MapLayer.fromPath( 'mapdata/edi_day11_v1', () => { requestRender(); } ));
     })();
   </script>
 </body>
