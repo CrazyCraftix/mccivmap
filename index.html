@@ -20,13 +20,8 @@
   <canvas id="main-canvas"></canvas>
   <span id="hud-x">0</span>
   <span id="hud-z">0</span>
-  <div id="textbox" style="position:fixed;top:0;left:0;padding:6px;font:16px sans-serif;max-width:90vw;word-wrap:break-word;">
-    TAB to show Labels
-  </div>
-  <div id="textbox2" hidden=true style="position:fixed;top:0;left:0;padding:6px;font:16px sans-serif;max-width:90vw;word-wrap:break-word;">
-    THIS IS WORK IN PROGRESS AND NOT ACCURATE / COMPLETE!! (= please don't hate me)<br/>
-    i just copied some of edii's labels as filler for now<br/>
-    hopefully i can find someone to manage the data so i can focus on features and polish
+  <div id="textbox" style="position:fixed;top:0;left:0;padding:6px;font:16px monospace;max-width:90vw;word-wrap:break-word;">
+    by @crazycraftix - TAB to show Labels
   </div>
   <script>
     'use strict';
@@ -798,11 +793,6 @@
       if (e.key === 'Tab') {
         e.preventDefault();
         let textbox = document.getElementById('textbox').hidden = true;
-        let textbox2 = document.getElementById('textbox2');
-        if (!textbox2.hidden) {
-          textbox2.textContent = 'WIP!!';
-        }
-        textbox2.hidden = !textbox2.hidden;
         showMarkers = !showMarkers;
         requestRender();
       }
@@ -995,7 +985,7 @@
       window.dispatchEvent(new Event('resize'));
       await document.fonts.load('32px MinecraftItalic');
 
-      mainLayer = await MapLayer.fromPath( 'mapdata/usgs_day10_v1', () => { requestRender(); } );
+      mainLayer = await MapLayer.fromPath( 'mapdata/usgs_day11_v1', () => { requestRender(); } );
 
       let scaleX = mainCanvas.width / (mainLayer.metadata.width * 1.1);
       let scaleY = mainCanvas.height / (mainLayer.metadata.height * 1.1);
