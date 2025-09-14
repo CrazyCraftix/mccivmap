@@ -454,7 +454,8 @@
           topLeft: {
             x: processed.topLeftX,
             y: processed.topLeftY,
-          }
+          },
+          maxLod: 0,
         };
         return mapLayer;
       }
@@ -626,19 +627,29 @@
         const centerTileY = Math.floor(camera.y / tileSize);
 
         this.#queue =
-          (function* (lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY) {
+          (function* (lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY, maxLod) {
+            if (lod < maxLod) {
+              lod = maxLod;
+              const pow = Math.pow(2, maxLod-lod);
+              centerTileX = Math.floor(centerTileX * pow);
+              centerTileY = Math.floor(centerTileY * pow);
+              minTileX = Math.floor(minTileX * pow);
+              minTileY = Math.floor(minTileY * pow);
+              maxTileX = Math.floor(maxTileX * pow);
+              maxTileY = Math.floor(maxTileY * pow);
+            }
             for (; lod >= 0; lod--) {
               for (const { x, y } of boundedDiamondPattern(centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY)) {
                 yield { x, y, lod };
               }
-              centerTileX = Math.floor(centerTileX * 2);
-              centerTileY = Math.floor(centerTileY * 2);
-              minTileX = Math.floor(minTileX * 2);
-              minTileY = Math.floor(minTileY * 2);
-              maxTileX = Math.floor(maxTileX * 2);
-              maxTileY = Math.floor(maxTileY * 2);
+              centerTileX = centerTileX * 2;
+              centerTileY = centerTileY * 2;
+              minTileX = minTileX * 2;
+              minTileY = minTileY * 2;
+              maxTileX = maxTileX * 2;
+              maxTileY = maxTileY * 2;
             }
-          })(lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY)
+          })(lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY, this.metadata?.maxLod || lod)
           .map( ({x, y, lod }) => ({x, y, lod, key: this.#tileKey(x, y, lod)}) )
           .filter( ({x, y, lod, key}) => !this.#tiles           .has(key) )
           .filter( ({x, y, lod, key}) => !this.#inflightTileKeys.has(key) )
@@ -659,6 +670,7 @@
                 this.#nonExistentTiles.add(tile.key)
               } else {
                 this.#tiles.set(tile.key, image);
+                this.metadata.maxLod = Math.max(this.metadata.maxLod, tile.lod);
                 this.#onTile();
               }
             })
@@ -687,7 +699,7 @@
 
 
     // ========== MARKERS ==========
-    function drawMarker(marker, ctx, camera) {
+    function drawMarker(marker, ctx, camera, onRedrawNeeded) {
       drawMarker.icons = drawMarker.icons || new Map();
       const icons = drawMarker.icons;
 
@@ -723,7 +735,10 @@
               else return response.blob();
             })
             .then(blob => createImageBitmap(blob))
-            .then(image => icons.set(marker.iconPath, image));
+            .then(image => {
+              icons.set(marker.iconPath, image);
+              onRedrawNeeded();
+            });
         } else {
           const iconScaleMap    = marker.iconScaleMap    || 12;
           const iconScaleScreen = marker.iconScaleScreen || 3;
@@ -849,7 +864,7 @@
         ctx.fillStyle = '#0005';
         ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
         for (const marker of markers) {
-          drawMarker(marker, ctx, camera);
+          drawMarker(marker, ctx, camera, () => requestRender());
         }
       }
 
@@ -980,7 +995,7 @@
       window.dispatchEvent(new Event('resize'));
       await document.fonts.load('32px MinecraftItalic');
 
-      mainLayer = await MapLayer.fromPath( '/mapdata/usgs_day10_v1', () => { requestRender(); } );
+      mainLayer = await MapLayer.fromPath( 'mapdata/usgs_day10_v1', () => { requestRender(); } );
 
       let scaleX = mainCanvas.width / (mainLayer.metadata.width * 1.1);
       let scaleY = mainCanvas.height / (mainLayer.metadata.height * 1.1);
