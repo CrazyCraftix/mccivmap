@@ -682,7 +682,7 @@
               maxTileX = maxTileX * 2;
               maxTileY = maxTileY * 2;
             }
-          })(lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY, this.metadata?.maxLod || lod)
+          })(lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY, /*this.metadata?.maxLod ||*/ lod)
           .map( ({x, y, lod }) => ({x, y, lod, key: this.#tileKey(x, y, lod)}) )
           .filter( ({x, y, lod, key}) => !this.#tiles           .has(key) )
           .filter( ({x, y, lod, key}) => !this.#inflightTileKeys.has(key) )
