@@ -64,6 +64,8 @@
       #scale = 1;
       #changeCallbacks = [];
 
+      scaleQuantizationSize = null;
+
       get x()     { return this.#x;     }
       get y()     { return this.#y;     }
       get scale() { return this.#scale; }
@@ -76,32 +78,40 @@
         Object.seal(this);
       }
 
-      worldToScreen(x, y, screenWidth, screenHeight) {
+      worldToScreen(x, y, screenWidth, screenHeight, quantize = false) {
+        const scale = this.#quantizedScale();
         return {
-          x: (x - this.#x) * this.#scale + screenWidth /2,
-          y: (y - this.#y) * this.#scale + screenHeight/2,
+          x: (x - this.#x) * scale + screenWidth /2,
+          y: (y - this.#y) * scale + screenHeight/2,
         };
       }
 
-      screenToWorld(x, y, screenWidth, screenHeight) {
+      screenToWorld(x, y, screenWidth, screenHeight, quantize = false) {
+        const scale = this.#quantizedScale();
         return {
-          x: (x - screenWidth /2) / this.#scale + this.#x,
-          y: (y - screenHeight/2) / this.#scale + this.#y,
+          x: (x - screenWidth /2) / scale + this.#x,
+          y: (y - screenHeight/2) / scale + this.#y,
         };
       }
 
-      worldToScreenDistance(value) { return value * this.#scale; }
-      screenToWorldDistance(value) { return value / this.#scale; }
+      worldToScreenDistance(value, quantize = false) { return value * (quantize ? this.#quantizedScale() : this.#scale); }
+      screenToWorldDistance(value, quantize = false) { return value / (quantize ? this.#quantizedScale() : this.#scale); }
 
-      apply(ctx, scaleQuantizationSize = null) {
-        const quantizedScale = (scaleQuantizationSize === null) ? this.#scale : Math.round(this.#scale * scaleQuantizationSize) / scaleQuantizationSize;
+      apply(ctx, quantize = false) {
+        const scale = quantize ? this.#quantizedScale() : this.#scale;
+
+        const translation = {
+          x: ctx.canvas.width /2 - scale * this.#x,
+          y: ctx.canvas.height/2 - scale * this.#y,
+        };
 
         // quantize translation to reduce flimmer
-        const quantizedTranslation = {
-          x: Math.round(ctx.canvas.width /2 - quantizedScale * this.#x),
-          y: Math.round(ctx.canvas.height/2 - quantizedScale * this.#y),
-        };
-        ctx.setTransform(quantizedScale, 0, 0, quantizedScale, quantizedTranslation.x, quantizedTranslation.y);
+        if (quantize) {
+          translation.x = Math.round(translation.x);
+          translation.y = Math.round(translation.y);
+        }
+
+        ctx.setTransform(scale, 0, 0, scale, translation.x, translation.y);
       }
 
       addChangeCallback(changeCallback) {
@@ -110,6 +120,11 @@
 
       #changed() {
         this.#changeCallbacks.forEach(changeCallback => { changeCallback(); });
+      }
+
+      #quantizedScale() {
+        if (this.scaleQuantizationSize === null) return this.#scale;
+        return Math.round(this.#scale * this.scaleQuantizationSize) / this.scaleQuantizationSize;
       }
     }
 
@@ -623,8 +638,8 @@
 
       // assumes camera.apply() has been called already
       draw(canvasContext, camera) {
-        const canvasWorldWidth = camera.screenToWorldDistance(canvasContext.canvas.width);
-        const canvasWorldHeight = camera.screenToWorldDistance(canvasContext.canvas.height);
+        const canvasWorldWidth = camera.screenToWorldDistance(canvasContext.canvas.width, true);
+        const canvasWorldHeight = camera.screenToWorldDistance(canvasContext.canvas.height, true);
 
         const lod = this.calculateLod(camera);
         const screenSpaceTileSize = this.calculateScreenSpaceTileSize(lod);
@@ -740,7 +755,7 @@
       const posY = marker.z || 0;
 
       const cssToDevicePixelRatio = window.devicePixelRatio || 1;
-      const screenPos = camera.worldToScreen(posX + .5, posY + .5, ctx.canvas.width, ctx.canvas.height);
+      const screenPos = camera.worldToScreen(posX + .5, posY + .5, ctx.canvas.width, ctx.canvas.height, true);
 
       if (marker.text) {
         const textSizeMap         = marker.textSizeMap             || 95;
@@ -884,7 +899,7 @@
       const cssToDevicePixelRatio = window.devicePixelRatio || 1;
       const ex = e.x * cssToDevicePixelRatio;
       const ey = e.y * cssToDevicePixelRatio;
-      let newClickedWorldCoords = mainCamera.screenToWorld(ex, ey, mainCanvas.width, mainCanvas.height);
+      let newClickedWorldCoords = mainCamera.screenToWorld(ex, ey, mainCanvas.width, mainCanvas.height, true);
       newClickedWorldCoords.x = Math.floor(newClickedWorldCoords.x);
       newClickedWorldCoords.y = Math.floor(newClickedWorldCoords.y);
       if (clickedWorldCoords != null && newClickedWorldCoords.x === clickedWorldCoords.x && newClickedWorldCoords.y === clickedWorldCoords.y) {
@@ -925,14 +940,12 @@
       const activeLayer = layers.at(activeLayerIndex);
       if (activeLayer) {
 
-      // quantize camera scale to hide tile seams
-      const lod = activeLayer.calculateLod(camera);
-      const tileSize = activeLayer.calculateScreenSpaceTileSize(lod);
-      camera.apply(ctx, tileSize);
-
-      if (activeLayer) activeLayer.draw(ctx, camera);
-      } else {
-        camera.apply
+        // quantize camera scale to hide tile seams
+        const lod = activeLayer.calculateLod(camera);
+        const tileSize = activeLayer.calculateScreenSpaceTileSize(lod);
+        camera.scaleQuantizationSize = tileSize;
+        camera.apply(ctx, true);
+        activeLayer.draw(ctx, camera);
       }
 
       ctx.resetTransform();
@@ -946,7 +959,7 @@
       }
 
       if (clickedWorldCoords !== null) {
-        let screenCoords = camera.worldToScreen(clickedWorldCoords.x + .5, clickedWorldCoords.y + .5, mainCanvas.width, mainCanvas.height);
+        let screenCoords = camera.worldToScreen(clickedWorldCoords.x + .5, clickedWorldCoords.y + .5, mainCanvas.width, mainCanvas.height, true);
         drawPin(ctx, screenCoords.x, screenCoords.y);
       }
 
