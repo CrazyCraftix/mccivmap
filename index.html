@@ -1071,7 +1071,7 @@
       window.dispatchEvent(new Event('resize'));
       await document.fonts.load('32px MinecraftItalic');
 
-      const mainLayer = await MapLayer.fromPath( 'mapdata/usgs_day11_v1', () => { requestRender(); } );
+      const mainLayer = await MapLayer.fromPath( 'mapdata/usgs_day12_v2', () => { requestRender(); } );
       cameraPanZoomController.stop();
       mainLayer.fitCamera(mainCamera, mainCanvas);
       layers.push(mainLayer);
