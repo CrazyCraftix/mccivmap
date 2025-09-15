@@ -399,7 +399,6 @@
 
     // ========== LAYERS ==========
     const TILE_SIZE = 512;
-    let DEBUG_FETCHSTOP = false;
     class MapLayer {
       // create MapLayer's
       static async fromPath(path, onTile) {
@@ -528,6 +527,10 @@
         const fileName = `lod${lod}_x${x}_z${y}.png`;
         if (!tileList.has(fileName)) return null;
 
+        if (DEBUG_TILE_FETCH_DELAY) {
+          await new Promise(r => setTimeout(r, Math.floor(Math.random() * 1000) + 1000));
+        }
+
         const res = await fetch(`${path}/${fileName}`);
         if (res.status === 404) return null;
         if (!res.ok) throw new Error(`failed to fetch lod: ${res.status}`);
@@ -546,7 +549,10 @@
         if (offsetX < -image.width || offsetY < -image.height) return null;
         if (offsetX > tileSize || offsetY > tileSize) return null;
 
-        await new Promise(r => setTimeout(r, Math.floor(Math.random() * 100) + 100));
+        if (DEBUG_TILE_FETCH_DELAY) {
+          await new Promise(r => setTimeout(r, Math.floor(Math.random() * 1000) + 1000));
+        }
+
         const osc = new OffscreenCanvas(TILE_SIZE, TILE_SIZE);
         const ctx = osc.getContext('2d');
         ctx.imageSmoothingEnabled = true;
@@ -660,8 +666,8 @@
         const centerTileY = Math.floor(camera.y / screenSpaceTileSize);
 
         this.#queue =
-          (function* (lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY, maxLod) {
-            for (let lodOffset = maxLod - lod; lod + lodOffset >= 0; lodOffset--) {
+          (function* (lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY, maxLod, minLod) {
+            for (let lodOffset = maxLod - lod; lod + lodOffset >= minLod; lodOffset--) {
               const offsetLod = lod + lodOffset;
               const pow = Math.pow(2, -lodOffset);
               const pattern = boundedDiamondPattern(
@@ -676,7 +682,7 @@
                 yield { x, y, lod: offsetLod };
               }
             }
-          })(lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY, this.metadata?.maxLod || lod)
+          })(lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY, this.metadata?.maxLod || lod, DEBUG_PREFETCH_LODS ? 0 : lod)
           .map( ({x, y, lod }) => ({x, y, lod, key: this.#tileKey(x, y, lod)}) )
           .filter( ({x, y, lod, key}) => !this.#tiles           .has(key) )
           .filter( ({x, y, lod, key}) => !this.#inflightTileKeys.has(key) )
@@ -686,7 +692,7 @@
       }
 
       #triggerFetches() {
-        if (DEBUG_FETCHSTOP) return;
+        if (DEBUG_STOP_TILE_FETCH) return;
         while (this.#inflightTileKeys.size < this.#maxConcurrentFetches) {
           const tile = this.#queue.next().value;
           if (tile === undefined) return;
@@ -781,6 +787,10 @@
 
 
     // ========== GLOBALS ==========
+    let DEBUG_STOP_TILE_FETCH = false;
+    let DEBUG_TILE_FETCH_DELAY = false;
+    let DEBUG_PREFETCH_LODS = false;
+
     const mainCanvas = document.getElementById('main-canvas');
     const hudX = document.getElementById('hud-x');
     const hudZ = document.getElementById('hud-z');
