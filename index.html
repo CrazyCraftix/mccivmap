@@ -661,28 +661,22 @@
 
         this.#queue =
           (function* (lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY, maxLod) {
-            if (lod < maxLod) {
-              lod = maxLod;
-              const pow = Math.pow(2, maxLod-lod);
-              centerTileX = Math.floor(centerTileX * pow);
-              centerTileY = Math.floor(centerTileY * pow);
-              minTileX = Math.floor(minTileX * pow);
-              minTileY = Math.floor(minTileY * pow);
-              maxTileX = Math.floor(maxTileX * pow);
-              maxTileY = Math.floor(maxTileY * pow);
-            }
-            for (; lod >= 0; lod--) {
-              for (const { x, y } of boundedDiamondPattern(centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY)) {
-                yield { x, y, lod };
+            for (let lodOffset = maxLod - lod; lod + lodOffset >= 0; lodOffset--) {
+              const offsetLod = lod + lodOffset;
+              const pow = Math.pow(2, -lodOffset);
+              const pattern = boundedDiamondPattern(
+                Math.floor(centerTileX * pow),
+                Math.floor(centerTileY * pow),
+                Math.floor(minTileX * pow),
+                Math.floor(minTileY * pow),
+                Math.floor(maxTileX * pow),
+                Math.floor(maxTileY * pow),
+              );
+              for (const { x, y } of pattern) {
+                yield { x, y, lod: offsetLod };
               }
-              centerTileX = centerTileX * 2;
-              centerTileY = centerTileY * 2;
-              minTileX = minTileX * 2;
-              minTileY = minTileY * 2;
-              maxTileX = maxTileX * 2;
-              maxTileY = maxTileY * 2;
             }
-          })(lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY, /*this.metadata?.maxLod ||*/ lod)
+          })(lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY, this.metadata?.maxLod || lod)
           .map( ({x, y, lod }) => ({x, y, lod, key: this.#tileKey(x, y, lod)}) )
           .filter( ({x, y, lod, key}) => !this.#tiles           .has(key) )
           .filter( ({x, y, lod, key}) => !this.#inflightTileKeys.has(key) )
