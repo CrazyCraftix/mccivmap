@@ -79,37 +79,31 @@
       }
 
       worldToScreen(x, y, screenWidth, screenHeight, quantize = false) {
-        const scale = this.#quantizedScale();
-        return {
+        const scale = quantize ? this.quantizedScale() : this.#scale;
+        return quantize ? {
+          x: x * scale + Math.round(screenWidth /2 - this.#x * scale),
+          y: y * scale + Math.round(screenHeight/2 - this.#y * scale),
+        } : {
           x: (x - this.#x) * scale + screenWidth /2,
           y: (y - this.#y) * scale + screenHeight/2,
         };
       }
 
       screenToWorld(x, y, screenWidth, screenHeight, quantize = false) {
-        const scale = this.#quantizedScale();
+        const scale = quantize ? this.quantizedScale() : this.#scale;
         return {
           x: (x - screenWidth /2) / scale + this.#x,
           y: (y - screenHeight/2) / scale + this.#y,
         };
       }
 
-      worldToScreenDistance(value, quantize = false) { return value * (quantize ? this.#quantizedScale() : this.#scale); }
-      screenToWorldDistance(value, quantize = false) { return value / (quantize ? this.#quantizedScale() : this.#scale); }
+      worldToScreenDistance(value, quantize = false) { return value * (quantize ? this.quantizedScale() : this.#scale); }
+      screenToWorldDistance(value, quantize = false) { return value / (quantize ? this.quantizedScale() : this.#scale); }
 
       apply(ctx, quantize = false) {
-        const scale = quantize ? this.#quantizedScale() : this.#scale;
+        const scale = quantize ? this.quantizedScale() : this.#scale;
 
-        const translation = {
-          x: ctx.canvas.width /2 - scale * this.#x,
-          y: ctx.canvas.height/2 - scale * this.#y,
-        };
-
-        // quantize translation to reduce flimmer
-        if (quantize) {
-          translation.x = Math.round(translation.x);
-          translation.y = Math.round(translation.y);
-        }
+        const translation = this.worldToScreen(0, 0, ctx.canvas.width, ctx.canvas.height, quantize);
 
         ctx.setTransform(scale, 0, 0, scale, translation.x, translation.y);
       }
@@ -118,13 +112,13 @@
         this.#changeCallbacks.push(changeCallback);
       }
 
-      #changed() {
-        this.#changeCallbacks.forEach(changeCallback => { changeCallback(); });
-      }
-
-      #quantizedScale() {
+      quantizedScale() {
         if (this.scaleQuantizationSize === null) return this.#scale;
         return Math.round(this.#scale * this.scaleQuantizationSize) / this.scaleQuantizationSize;
+      }
+
+      #changed() {
+        this.#changeCallbacks.forEach(changeCallback => { changeCallback(); });
       }
     }
 
@@ -766,7 +760,7 @@
         ctx.fillStyle             = marker.textFillStyle           || '#f00';
         const lineWidthPercentage = marker.textLineWidthPercentage || .075;
 
-        const textSize = Math.min(textSizeMap * camera.scale, textSizeScreen * cssToDevicePixelRatio);
+        const textSize = Math.min(textSizeMap * camera.quantizedScale(), textSizeScreen * cssToDevicePixelRatio);
         ctx.font = `${textSize}px MinecraftItalic`;
         // * 2 because half of strokeText() is overdrawn by fillText()
         ctx.lineWidth = lineWidthPercentage * 2 * textSize;
@@ -793,7 +787,7 @@
         } else if (marker !== null) {
           const iconScaleMap    = marker.iconScaleMap    || 6;
           const iconScaleScreen = marker.iconScaleScreen || iconScaleMap / 2;
-          const iconScale = Math.min(iconScaleMap * camera.scale, iconScaleScreen * cssToDevicePixelRatio);
+          const iconScale = Math.min(iconScaleMap * camera.quantizedScale(), iconScaleScreen * cssToDevicePixelRatio);
           ctx.drawImage(icon, screenPos.x - icon.width/2 * iconScale, screenPos.y - icon.height/2 * iconScale, icon.width * iconScale, icon.height * iconScale);
         }
       }
