@@ -1,0 +1,6 @@
+lod0_x-1_z-1.png
+lod0_x-1_z0.png
+lod0_x-2_z0.png
+lod0_x0_z-1.png
+lod0_x0_z0.png
+lod0_x1_z-1.png

@@ -676,6 +676,8 @@
 
         this.#queue =
           (function* (lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY, maxLod, minLod) {
+            maxLod = Math.max(maxLod, lod);
+            minLod = Math.min(minLod, lod);
             for (let lodOffset = maxLod - lod; lod + lodOffset >= minLod; lodOffset--) {
               const offsetLod = lod + lodOffset;
               const pow = Math.pow(2, -lodOffset);
@@ -1104,6 +1106,9 @@
       requestRender();
 
       layers.push(await MapLayer.fromPath( 'mapdata/edi_day11_v1', () => { requestRender(); } ));
+      layers.push(await MapLayer.fromPath( 'mapdata/zders_2025-09-15_08.48.25', () => { requestRender(); } ));
+      layers.push(await MapLayer.fromPath( 'mapdata/zders_night_2025-09-15_23.56.48', () => { requestRender(); } ));
+      layers.push(await MapLayer.fromPath( 'mapdata/zders_ore_waypoints', () => { requestRender(); } ));
     })();
   </script>
 </body>
