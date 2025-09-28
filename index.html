@@ -450,22 +450,20 @@
         const matchesZ     = [...fileName.matchAll(/z(-?\d+(?:\.\d+)?)/g)];
         const matchesScale = [...fileName.matchAll(/scale(-?\d+(?:\.\d+)?)/g)];
 
-        const topLeftX = (matchesX    .length > 0) ? parseFloat(matchesX    .at(-1)[1]) : NaN;
-        const topLeftY = (matchesZ    .length > 0) ? parseFloat(matchesZ    .at(-1)[1]) : NaN;
+        const topLeftX = (matchesX    .length > 0) ? parseFloat(matchesX    .at(-1)[1]) : 0;
+        const topLeftY = (matchesZ    .length > 0) ? parseFloat(matchesZ    .at(-1)[1]) : 0;
         const scale    = (matchesScale.length > 0) ? parseFloat(matchesScale.at(-1)[1]) : 1;
 
-        const processed = await MapLayer.#preprocessMapImage(image, topLeftX, topLeftY);
-        if (processed == null) return null;
         const mapLayer = new MapLayer(
-          (lod, x, y) => MapLayer.#createTileFromImage(lod, x, y, processed.image, processed.topLeftX, processed.topLeftY),
+          (lod, x, y) => MapLayer.#createTileFromImage(lod, x, y, image, topLeftX, topLeftY),
           onTile
         );
         mapLayer.metadata = {
-          width: processed.image.width,
-          height: processed.image.height,
+          width: image.width,
+          height: image.height,
           topLeft: {
-            x: processed.topLeftX,
-            y: processed.topLeftY,
+            x: topLeftX,
+            y: topLeftY,
           },
           maxLod: 0,
           scale: scale,
@@ -482,54 +480,6 @@
         camera.x = this.metadata.topLeft.x * this.metadata.scale + screenWidth  / 2;
         camera.y = this.metadata.topLeft.y * this.metadata.scale + screenHeight / 2;
       }
-
-      // crops black pixels and makes remaining black pixels transparent
-      // notes:
-      // - returns null if bitmap is completely black
-      // (mapImage: ImageBitmap) -> ImageBitmap
-      static async #preprocessMapImage(mapImage, topLeftX, topLeftY) {
-        const width = mapImage.width;
-        const height = mapImage.height;
-
-        // convert bitmap to canvas
-        const canvas = new OffscreenCanvas(width, height);
-        const canvasContext = canvas.getContext('2d');
-        canvasContext.drawImage(mapImage, 0, 0);
-
-        // make black pixels transparent and find bounding rectangle of non-black pixels
-        let minX = width;
-        let minY = height;
-        let maxX = -1;
-        let maxY = -1;
-        const imageData = canvasContext.getImageData(0, 0, width, height);
-        const pixels = imageData.data;
-        for (let y = 0, i = 0; y < height; y++) {
-          for (let x = 0; x < width; x++, i += 4) {
-            // check if r, g and b are all 0 (i.e. the pixel is black)
-            if ((pixels[i] | pixels[i+1] | pixels[i+2]) === 0) {
-              pixels[i+3] = 0; // make pixel transparent
-            } else {
-              pixels[i+3] = 255; // ensure pixel is opaque
-              if (x < minX) minX = x;
-              if (y < minY) minY = y;
-              if (x > maxX) maxX = x;
-              if (y > maxY) maxY = y;
-            }
-          }
-        }
-        if (maxX < minX) return null; // all pixels were black and would now be transparent
-        canvasContext.putImageData(imageData, 0, 0);
-
-        // crop image and return it
-        const croppedWidth = maxX - minX + 1;
-        const croppedHeight = maxY - minY + 1;
-        return {
-          image: await createImageBitmap(canvas, minX, minY, croppedWidth, croppedHeight),
-          topLeftX: (topLeftX + minX) || 0,
-          topLeftY: (topLeftY + minY) || 0,
-        };
-      }
-
 
       // obtain tiles
       static async #fetchTileFromPath(lod, x, y, path, tileList) {
@@ -674,6 +624,7 @@
         const centerTileX = Math.floor(camera.x / screenSpaceTileSize);
         const centerTileY = Math.floor(camera.y / screenSpaceTileSize);
 
+        const thisLayer = this;
         this.#queue =
           (function* (lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY, maxLod, minLod) {
             maxLod = Math.max(maxLod, lod);
@@ -691,6 +642,14 @@
               );
               for (const { x, y } of pattern) {
                 yield { x, y, lod: offsetLod };
+              }
+            }
+            if (DEBUG_PREFETCH_LODS) {
+              const activeLayer = layers.at(activeLayerIndex);
+              if (thisLayer === activeLayer) {
+                console.log('end of lod queue reached for active layer');
+              } else {
+                console.log('end of lod queue reached for a background layer');
               }
             }
           })(lod, centerTileX, centerTileY, minTileX, minTileY, maxTileX, maxTileY, this.metadata?.maxLod || lod, DEBUG_PREFETCH_LODS ? 0 : lod)
@@ -1073,6 +1032,17 @@
 
 
     // ========== EVENTS ==========
+    window.addEventListener('paste', async e => {
+      console.log('paste event:', e);
+      const file = e.clipboardData.items[0].getAsFile();
+      if (file === null) return;
+      const bitmap = await createImageBitmap(file);
+      if (bitmap === null) return;
+      const layer = await MapLayer.fromImage(bitmap, () => { requestRender(); } );
+      console.log(layer);
+      layers.push(layer);
+    });
+
     window.addEventListener('resize', () => {
       const cssToDevicePixelRatio = window.devicePixelRatio || 1;
       let screenWidthInCssPixels = window.visualViewport?.width || window.innerWidth;
