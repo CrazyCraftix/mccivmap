@@ -474,8 +474,8 @@
       fitCamera(camera, canvas) {
         const screenWidth  = this.metadata.width  * this.metadata.scale;
         const screenHeight = this.metadata.height * this.metadata.scale;
-        const scaleX = canvas.width  / (screenWidth  * 1.1);
-        const scaleY = canvas.height / (screenHeight * 1.1);
+        const scaleX = canvas.width  / (screenWidth  /* * 1.1 */);
+        const scaleY = canvas.height / (screenHeight /* * 1.1 */);
         camera.scale = Math.min(scaleX, scaleY);
         camera.x = this.metadata.topLeft.x * this.metadata.scale + screenWidth  / 2;
         camera.y = this.metadata.topLeft.y * this.metadata.scale + screenHeight / 2;
@@ -812,25 +812,59 @@
       { x:  2019, z:   188, y:  83, iconPath: '/icons/coal.png'         },
       { x: -1873, z:  -305, y: 164, iconPath: '/icons/quartz.png'       },
 
-      { x:  2268, z:  -751, textFillStyle: '#f300f3', textSizeMap: 95,  text: 'Renkai'                  },
-      { x:  2553, z: -1452, textFillStyle: '#fe3333', textSizeMap: 95,  text: 'Northelios'              },
-      { x:  2683, z:   452, textFillStyle: '#de8644', textSizeMap: 103, text: 'Imperium'                },
-      { x:   973, z:  -260, textFillStyle: '#f90120', textSizeMap: 109, text: 'Sarkovia'                },
-      { x:  1722, z:  -416, textFillStyle: '#6767ea', text: 'Polestar'                },
-      //{ x:  2275, z:  -378, textFillStyle: '#f35e0e', textBaseline: 'top',    text: 'Oranjestad'             },
-      //{ x:  2458, z:  -426, textFillStyle: '#8be6f0', textBaseline: 'bottom', text: 'The Federation of Ironhill' },
-      //{ x:  2429, z:  -553, textFillStyle: '#f300f3', textBaseline: 'bottom', text: 'Hoseki D.O.' },
-      { x:  -505, z:   515, textFillStyle: '#ffdd33', textSizeMap: 143, text: 'Kingdom of Chimera'   },
-      { x:   -59, z:  1506, textFillStyle: '#559b16', textSizeMap: 78, text: 'The SWTZ'                },
-      { x:  3049, z:  1277, textFillStyle: '#56935b', textSizeMap: 74, textAlign: 'left', text: '  Harvestspire'            },
-      { x:  2655, z:  1176, textFillStyle: '#fffa96', textSizeMap: 85, text: 'Universale'            },
-      { x: -2363, z:   524, textFillStyle: '#32ed22', textSizeMap: 78, text: 'El Gran Cartel'          },
-      { x: -1387, z:  -949, textFillStyle: '#bbdc65', textSizeMap: 88, text: 'Helioria'                },
-      { x:  -113, z: -1342, textFillStyle: '#43a6d9', text: 'Pantha'                  },
+      { x:  2275, z:  -410, textFillStyle: '#f35e0e', textSizeMap: 100, text: 'Oranjestad'         },
+      { x:  2492, z:  -310, textFillStyle: '#8be6f0', textSizeMap: 100, text: 'Ironhill'           },
+      { x:   -59, z:  1506, textFillStyle: '#559b16', textSizeMap: 100, text: 'The SWTZ'           },
+      { x:  3049, z:  1277, textFillStyle: '#56935b', textSizeMap: 100, text: 'Harvestspire'       },
+      { x: -2363, z:   524, textFillStyle: '#32ed22', textSizeMap: 100, text: 'El Gran Cartel'     },
+      { x: -1387, z:  -949, textFillStyle: '#bbdc65', textSizeMap: 100, text: 'Helioria'           },
+      { x:  1722, z:  -416, textFillStyle: '#6767ea', textSizeMap: 100, text: 'Polestar'           },
+      { x:  -113, z: -1342, textFillStyle: '#43a6d9', textSizeMap: 100, text: 'Pantha'             },
+      { x: -2910, z: - 543, textFillStyle: '#d1502f', textSizeMap: 100, text: 'Soup Bowl'          },
+      { x:  1583, z: -1323, textFillStyle: '#8667de', textSizeMap: 100, text: 'Penguinia'          },
 
-      { x:  1421, z:  1124, textFillStyle: '#b9bbcc', text: 'Checkerboard Union'      },
-      { x: -2910, z: - 543, textFillStyle: '#d1502f', text: 'Soup Bowl'               },
-      { x:  1583, z: -1323, textFillStyle: '#8667de', text: 'Penguinia'               },
+      { x:  2951, z:  -832, textFillStyle: '#ffff00', textSizeMap: 100, text: 'Pebbleopolis'       },
+
+      { x:   755, z:  1181, textFillStyle: '#649cce', textSizeMap: 100, text: 'Prinzenburg'        },
+
+      { x:  2553, z: -1452, textFillStyle: '#fe3333', textSizeMap: 100, text: 'Northelios'         },
+      { x:  2415, z: -1329, textFillStyle: '#fe3333', textSizeMap:  65, text: 'Snowlandia'         },
+
+      { x:  2268, z:  -751, textFillStyle: '#f300f3', textSizeMap: 100, text: 'Renkai'             },
+      { x:  2409, z: -1033, textFillStyle: '#f300f3', textSizeMap:  65, text: 'Kokai'              },
+      { x:  2429, z:  -553, textFillStyle: '#f300f3', textSizeMap:  65, text: 'Hoseki'             },
+
+      { x:  2091, z:   -64, textFillStyle: '#52844f', textSizeMap: 100, text: 'Hidden Leaf'        },
+
+      { x:  2683, z:   452, textFillStyle: '#de8644', textSizeMap: 100, text: 'Imperium'           },
+      { x:  2865, z:   319, textFillStyle: '#de8644', textSizeMap:  65, text: 'Sideris'            },
+      { x:  2757, z:   613, textFillStyle: '#de8644', textSizeMap:  65, text: 'Se Lang Mur'        },
+
+      { x:  2693, z:   989, textFillStyle: '#fffa96', textSizeMap: 100, text: 'Universale'         },
+      { x:  2511, z:  1111, textFillStyle: '#fffa96', textSizeMap:  65, text: 'Venican'            },
+
+      { x:  1650, z:  1043, textFillStyle: '#b9bbcc', textSizeMap: 100, text: 'Checkerboard Union' },
+      { x:  1587, z:   308, textFillStyle: '#b9bbcc', textSizeMap:  65, text: 'Steej'              },
+      { x:  1277, z:   570, textFillStyle: '#b9bbcc', textSizeMap:  65, text: 'The Great Wall'     },
+      { x:  1141, z:   411, textFillStyle: '#b9bbcc', textSizeMap:  45, text: 'Wallachia'          },
+      { x:  1563, z:   689, textFillStyle: '#b9bbcc', textSizeMap:  65, text: 'House of Cards'     },
+
+      { x:   700, z:    70, textFillStyle: '#f90120', textSizeMap: 100, text: 'Sarkovia'           },
+      { x:   867, z:   283, textFillStyle: '#f90120', textSizeMap:  65, text: 'Metalgrad'          },
+      { x:   986, z:  -167, textFillStyle: '#f90120', textSizeMap:  65, text: 'Krasnygrad'         },
+      { x:   858, z:  -478, textFillStyle: '#f90120', textSizeMap:  65, text: 'Flussdorf'          },
+      { x:  1286, z:  -322, textFillStyle: '#f90120', textSizeMap:  65, text: 'Rotstadt'           },
+
+      { x:  -505, z:   515, textFillStyle: '#ffdd33', textSizeMap: 100, text: 'Kingdom of Chimera' },
+      { x: -2210, z:  1023, textFillStyle: '#ffdd33', textSizeMap:  65, text: 'White Harbour'      },
+      { x: -1730, z:   734, textFillStyle: '#ffdd33', textSizeMap:  65, text: 'Heraclesia'         },
+      { x: -1448, z:   523, textFillStyle: '#ffdd33', textSizeMap:  65, text: 'Aramore'            },
+      { x: -1500, z:   400, textFillStyle: '#ffdd33', textSizeMap:  45, text: 'Toprock'            },
+      { x: -1840, z:   177, textFillStyle: '#ffdd33', textSizeMap:  65, text: 'Northport'          },
+      { x:  -432, z:   710, textFillStyle: '#ffdd33', textSizeMap:  65, text: 'Wolframstein'       },
+      { x:  -566, z:   247, textFillStyle: '#ffdd33', textSizeMap:  65, text: 'Saorsa'             },
+      { x:  -129, z:   300, textFillStyle: '#ffdd33', textSizeMap:  65, text: 'Colodore Order'     },
+      { x:  -181, z:  -285, textFillStyle: '#ffdd33', textSizeMap:  65, text: 'Horizon'            },
     ];
 
     document.addEventListener('keydown', e => {
@@ -1060,7 +1094,7 @@
       window.dispatchEvent(new Event('resize'));
       await document.fonts.load('32px MinecraftItalic');
 
-      const mainLayer = await MapLayer.fromPath( 'mapdata/usgs_day12_v2', () => { requestRender(); } );
+      const mainLayer = await MapLayer.fromPath( 'mapdata/zders_2025-09-15_08.48.25', () => { requestRender(); } );
       cameraPanZoomController.stop();
       mainLayer.fitCamera(mainCamera, mainCanvas);
       layers.push(mainLayer);
@@ -1080,9 +1114,9 @@
       window.setTimeout(() => { document.getElementById('textbox').hidden = true; }, 5000);
       requestRender();
 
-      layers.push(await MapLayer.fromPath( 'mapdata/edi_day11_v1', () => { requestRender(); } ));
-      layers.push(await MapLayer.fromPath( 'mapdata/zders_2025-09-15_08.48.25', () => { requestRender(); } ));
       layers.push(await MapLayer.fromPath( 'mapdata/zders_night_2025-09-15_23.56.48', () => { requestRender(); } ));
+      layers.push(await MapLayer.fromPath( 'mapdata/usgs_day12_v2', () => { requestRender(); } ));
+      layers.push(await MapLayer.fromPath( 'mapdata/edi_day11_v1', () => { requestRender(); } ));
       layers.push(await MapLayer.fromPath( 'mapdata/zders_ore_waypoints', () => { requestRender(); } ));
     })();
   </script>
